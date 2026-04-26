@@ -1,10 +1,10 @@
-#include "kernels.cuh"
 #include "matrix.cuh"
+#include "kernels.cuh"
 #include "strassen_kernel.cuh"
 #include "utils.cuh"
 
-#include <chrono>
 #include <iostream>
+#include <chrono>
 #include <vector>
 
 using std::cout;
@@ -13,6 +13,7 @@ using std::vector;
 
 constexpr size_t n = 3072, k = 3072, m = 3072;
 // constexpr size_t N = 256;
+
 
 void verify_cpu(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
   A.cpu();
@@ -40,8 +41,7 @@ test_blockwise(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
 
   _gemm_nn_block_launcher<fp32>(A, B, C, 16);
 
-  std::chrono::duration<double, std::milli> res =
-      std::chrono::high_resolution_clock::now() - start_time;
+  std::chrono::duration<double, std::milli> res = std::chrono::high_resolution_clock::now() - start_time;
 
   // verify_cpu(A, B, C);
   return res;
@@ -53,9 +53,35 @@ test_elementwise(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
 
   _gemm_nkm_simple_launcher<fp32>(A, B, C);
 
-  return std::chrono::high_resolution_clock::now() - start_time;
+  std::chrono::duration<double, std::milli> res = std::chrono::high_resolution_clock::now() - start_time;
 
   // verify_cpu(A, B, C);
+  return res;
+}
+
+std::chrono::duration<double, std::milli> test_wmma(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
+    A.cuda();
+    B.cuda();
+    C.cuda();
+    Matrix<half> A_fp16(n, k, ROW_WISE, CUDA);
+    Matrix<half> B_fp16(k, m, ROW_WISE, CUDA);
+
+    size_t num_elements_A = n * k;
+    size_t num_elements_B = k * m;
+    int threads = 256;
+
+    cast_fp32_to_fp16<<<(num_elements_A + threads - 1) / threads, threads>>>(A.item(), A_fp16.item(), num_elements_A);
+    cast_fp32_to_fp16<<<(num_elements_B + threads - 1) / threads, threads>>>(B.item(), B_fp16.item(), num_elements_B);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    _gemm_nn_wmma_launcher<n>(A_fp16, B_fp16, C);
+
+    std::chrono::duration<double, std::milli> res = std::chrono::high_resolution_clock::now() - start_time;
+
+    // verify_cpu(A, B, C);
+    return res;
 }
 
 std::chrono::duration<double, std::milli>
@@ -92,39 +118,38 @@ signed main() {
     input_matrices_c.push_back(C);
   }
 
-  std::chrono::duration<double, std::milli> avg_block =
-      std::chrono::duration<double, std::milli>::zero();
-  std::chrono::duration<double, std::milli> avg_element =
-      std::chrono::duration<double, std::milli>::zero();
+    std::chrono::duration<double, std::milli> avg_block = std::chrono::duration<double, std::milli>::zero();
+    std::chrono::duration<double, std::milli> avg_element = std::chrono::duration<double, std::milli>::zero();
+    std::chrono::duration<double, std::milli> avg_wmma = std::chrono::duration<double, std::milli>::zero();
 
-  test_blockwise(*input_matrices_a[num_tries], *input_matrices_b[num_tries],
-                 *input_matrices_c[num_tries]);
-  test_elementwise(*input_matrices_a[num_tries], *input_matrices_b[num_tries],
-                   *input_matrices_c[num_tries]);
+    test_blockwise(*input_matrices_a[num_tries], *input_matrices_b[num_tries], *input_matrices_c[num_tries]);
+    test_elementwise(*input_matrices_a[num_tries], *input_matrices_b[num_tries], *input_matrices_c[num_tries]);
+    test_wmma(*input_matrices_a[num_tries], *input_matrices_b[num_tries], *input_matrices_c[num_tries]);
 
-  for (size_t i = 0; i < num_tries; i++) {
-    avg_block += test_blockwise(*input_matrices_a[i], *input_matrices_b[i],
-                                *input_matrices_c[i]);
-  }
+    for (size_t i = 0; i < num_tries; i++) {
+        avg_block += test_blockwise(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
+    }
 
-  cout << "Blockwise GPU multiplication duration: ~" << avg_block / (num_tries)
-       << "\n";
+    cout << "Blockwise GPU multiplication duration: ~" << avg_block / (num_tries) << "\n";
 
-  for (size_t i = 0; i < num_tries; i++) {
-    avg_element += test_elementwise(*input_matrices_a[i], *input_matrices_b[i],
-                                    *input_matrices_c[i]);
-  }
+    for (size_t i = 0; i < num_tries; i++) {
+        avg_element += test_elementwise(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
+    }
 
-  cout << "Elementwise GPU multiplication duration: ~"
-       << avg_element / (num_tries) << "\n";
+  cout << "Elementwise GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
 
   for (size_t i = 0; i < num_tries; i++) {
-    avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i],
-                                 *input_matrices_c[i]);
+    avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
   }
 
-  cout << "Strassen GPU multiplication duration: ~" << avg_element / (num_tries)
-       << "\n";
+  cout << "Strassen GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
+
+  return 0;
+  for (size_t i = 0; i < num_tries; i++) {
+      avg_wmma += test_wmma(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
+  }
+
+  cout << "Warp Matrix Multiply-Accumulate GPU multiplication duration: ~" << avg_wmma / (num_tries) << "\n";
 
   return 0;
 }

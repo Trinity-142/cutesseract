@@ -1,9 +1,13 @@
 #pragma once
 
+#include <cuda_runtime.h>
+#include <mma.h>
+
 #include "dtypes.cuh"
 #include "matrix.cuh"
 #include "utils.cuh"
-#include <cuda_runtime.h>
+using namespace nvcuda;
+
 
 /*
 
@@ -140,4 +144,54 @@ static __global__ void _gemm_nkm_simple(T *A, // row-wise
     }
     C[row * M + col] = sum;
   }
+}
+
+template <size_t N>
+static __global__ void _gemm_nn_wmma_simple(
+    half *A,
+    half *B,
+    fp32 *C
+) {
+  const int WMMA_M = 16;
+  const int WMMA_N = 16;
+  const int WMMA_K = 16;
+
+  size_t col = blockIdx.x * WMMA_N;
+  size_t row = blockIdx.y * WMMA_M;
+
+  wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+  wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
+  wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, fp32> c_frag;
+  wmma::fill_fragment(c_frag, 0.0f);
+
+  for (size_t i = 0; i < N; i += WMMA_K) {
+    wmma::load_matrix_sync(a_frag, A + row * N + i, N);
+    wmma::load_matrix_sync(b_frag, B + i * N + col, N);
+    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+  }
+  wmma::store_matrix_sync(C + row * N + col, c_frag, N, wmma::mem_row_major);
+}
+
+template <size_t N>
+__host__ void _gemm_nn_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<fp32> &C) {
+  assert(A.shape().first == N && A.shape().second == N);
+  assert(B.shape().first == N && B.shape().second == N);
+  assert(C.shape().first == N && C.shape().second == N);
+
+  assert((N % 16) == 0);
+
+  assert(A.get_layout() == ROW_WISE);
+  assert(B.get_layout() == ROW_WISE);
+  assert(C.get_layout() == ROW_WISE);
+
+  A.cuda();
+  B.cuda();
+  C.cuda();
+
+  dim3 block_dim(32, 1);
+  dim3 grid_dim(N / 16, N / 16);
+
+  //cudaFuncSetCacheConfig(_gemm_nn_wmma_launcher<N>, cudaFuncCachePreferShared);
+  _gemm_nn_wmma_simple<N><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+  CUDA_CHECK(cudaDeviceSynchronize());
 }
