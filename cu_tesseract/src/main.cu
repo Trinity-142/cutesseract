@@ -56,6 +56,16 @@ std::chrono::duration<double, std::milli> test_elementwise(Matrix<fp32> &A, Matr
     // verify_cpu(A, B, C);
 }
 
+std::chrono::duration<double, std::milli> test_strassen(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    _gemm_strassen_launcher<fp32, n, k, m>(A, B, C);
+
+    return std::chrono::high_resolution_clock::now() - start_time;
+
+    // verify_cpu(A, B, C);
+}
+
 signed main() {
 
     size_t num_tries = 16;
@@ -96,6 +106,12 @@ signed main() {
     }
 
     cout << "Elementwise GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
+
+    for (size_t i = 0; i < num_tries; i++) {
+        avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
+    }
+    
+    cout << "Strassen GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
 
     return 0;
 }
