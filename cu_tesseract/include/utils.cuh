@@ -23,7 +23,7 @@ inline void curandCheckCall(curandStatus_t code, const char *file, int line) {
   }
 }
 
-__global__ inline void cast_fp32_to_fp16(const fp32* in, half* out, const size_t size) {
+__global__ inline void castFp32ToFp16(const fp32* in, half* out, const size_t size) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         out[idx] = __float2half(in[idx]);

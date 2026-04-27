@@ -23,6 +23,7 @@ Max waprs in SM - 48
 Max Block per SM - 16!!
 
 Tensor Core count - 112
+Tensor Cores per SM - 4
 
 SMEM per SM - 128kb
 equal SMEM per Warp - 32kb
@@ -146,52 +147,58 @@ static __global__ void _gemm_nkm_simple(T *A, // row-wise
   }
 }
 
-template <size_t N>
-static __global__ void _gemm_nn_wmma_simple(
+// https://developer.nvidia.com/blog/programming-tensor-cores-cuda-9/
+constexpr int tileSize = 16;
+constexpr int warpSize = 32;
+template <size_t N, size_t K, size_t M> // n*k x k*m = n*m
+static __global__ void _gemm_nkm_wmma_simple(
     half *A,
     half *B,
     fp32 *C
 ) {
-  const int WMMA_M = 16;
-  const int WMMA_N = 16;
-  const int WMMA_K = 16;
+    size_t warpCol = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+    size_t warpRow = blockIdx.y * blockDim.y + threadIdx.y;
 
-  size_t col = blockIdx.x * WMMA_N;
-  size_t row = blockIdx.y * WMMA_M;
+    const int WMMA_M = tileSize;
+    const int WMMA_N = tileSize;
+    const int WMMA_K = tileSize;
 
-  wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
-  wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
-  wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, fp32> c_frag;
-  wmma::fill_fragment(c_frag, 0.0f);
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, fp32> c_frag;
+    wmma::fill_fragment(c_frag, 0.0f);
 
-  for (size_t i = 0; i < N; i += WMMA_K) {
-    wmma::load_matrix_sync(a_frag, A + row * N + i, N);
-    wmma::load_matrix_sync(b_frag, B + i * N + col, N);
-    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
-  }
-  wmma::store_matrix_sync(C + row * N + col, c_frag, N, wmma::mem_row_major);
+    for (size_t i = 0; i < K; i += WMMA_K) {
+        wmma::load_matrix_sync(a_frag, A + warpRow * WMMA_M * K + i, K);
+        wmma::load_matrix_sync(b_frag, B + warpCol * WMMA_N + i * M, M);
+        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    }
+    wmma::store_matrix_sync(C + warpRow * WMMA_M * M + warpCol * WMMA_N, c_frag, M, wmma::mem_row_major);
 }
 
-template <size_t N>
+template <size_t N, size_t K, size_t M> // n*k x k*m = n*m
 __host__ void _gemm_nn_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<fp32> &C) {
-  assert(A.shape().first == N && A.shape().second == N);
-  assert(B.shape().first == N && B.shape().second == N);
-  assert(C.shape().first == N && C.shape().second == N);
+    assert(A.shape().first == N && A.shape().second == K);
+    assert(B.shape().first == K && B.shape().second == M);
+    assert(C.shape().first == N && C.shape().second == M);
 
-  assert((N % 16) == 0);
+    assert(A.get_layout() == ROW_WISE);
+    assert(B.get_layout() == ROW_WISE);
+    assert(C.get_layout() == ROW_WISE);
 
-  assert(A.get_layout() == ROW_WISE);
-  assert(B.get_layout() == ROW_WISE);
-  assert(C.get_layout() == ROW_WISE);
+    A.cuda();
+    B.cuda();
+    C.cuda();
 
-  A.cuda();
-  B.cuda();
-  C.cuda();
-
-  dim3 block_dim(32, 1);
-  dim3 grid_dim(N / 16, N / 16);
-
-  //cudaFuncSetCacheConfig(_gemm_nn_wmma_launcher<N>, cudaFuncCachePreferShared);
-  _gemm_nn_wmma_simple<N><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
-  CUDA_CHECK(cudaDeviceSynchronize());
+    constexpr size_t warpsInBlock = 4;
+    assert(K % tileSize == 0);
+    assert(N % tileSize == 0);
+    assert(M % (tileSize * warpsInBlock) == 0);
+    static_assert(warpsInBlock <= warpSize);
+    dim3 block_dim(warpsInBlock * warpSize, 1);
+    dim3 grid_dim((M + (tileSize * warpsInBlock - 1)) / (tileSize * warpsInBlock),
+                (N + (tileSize * warpsInBlock - 1)) / (tileSize * warpsInBlock));
+    //cudaFuncSetCacheConfig(_gemm_nn_wmma_launcher<N, K, M>, cudaFuncCachePreferShared);
+    _gemm_nkm_wmma_simple<N, K, M><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+    CUDA_CHECK(cudaDeviceSynchronize());
 }

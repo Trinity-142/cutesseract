@@ -66,17 +66,14 @@ std::chrono::duration<double, std::milli> test_wmma(Matrix<fp32> &A, Matrix<fp32
     Matrix<half> A_fp16(n, k, ROW_WISE, CUDA);
     Matrix<half> B_fp16(k, m, ROW_WISE, CUDA);
 
-    size_t num_elements_A = n * k;
-    size_t num_elements_B = k * m;
-    int threads = 256;
-
-    cast_fp32_to_fp16<<<(num_elements_A + threads - 1) / threads, threads>>>(A.item(), A_fp16.item(), num_elements_A);
-    cast_fp32_to_fp16<<<(num_elements_B + threads - 1) / threads, threads>>>(B.item(), B_fp16.item(), num_elements_B);
+    size_t threads = 256;
+    castFp32ToFp16<<<(n * k + threads - 1) / threads, threads>>>(A.item(), A_fp16.item(), n * k);
+    castFp32ToFp16<<<(k * m + threads - 1) / threads, threads>>>(B.item(), B_fp16.item(), k * m);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    _gemm_nn_wmma_launcher<n>(A_fp16, B_fp16, C);
+    _gemm_nn_wmma_launcher<n, k, m>(A_fp16, B_fp16, C);
 
     std::chrono::duration<double, std::milli> res = std::chrono::high_resolution_clock::now() - start_time;
 
