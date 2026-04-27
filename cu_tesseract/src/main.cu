@@ -154,6 +154,12 @@ signed main() {
     ms = avg_wmma / (num_tries);
     printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
 
+    for (size_t i = 0; i < num_tries; i++) {
+        avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
+    }
+
+    cout << "Strassen GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
+
     return 0;
 }
 
