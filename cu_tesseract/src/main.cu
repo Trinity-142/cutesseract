@@ -126,7 +126,7 @@ signed main() {
         avg_block += test_blockwise(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
     }
 
-    cout << "Blockwise GPU multiplication duration: ~" << avg_block / (num_tries) << "\n";
+    cout << "Blockwise GPU multiplication duration: ~" << avg_block / (num_tries) << "ms\n";
     float ms = avg_block / (num_tries);
     printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
 
@@ -134,7 +134,7 @@ signed main() {
         avg_element += test_elementwise(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
     }
 
-    cout << "Elementwise GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
+    cout << "Elementwise GPU multiplication duration: ~" << avg_element / (num_tries) << "ms\n";
     ms = avg_element / (num_tries);
     printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
 
@@ -149,7 +149,7 @@ signed main() {
       avg_wmma += test_wmma(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
   }
 
-    cout << "Warp Matrix Multiply-Accumulate GPU multiplication duration: ~" << avg_wmma / (num_tries) << "\n";
+    cout << "Warp Matrix Multiply-Accumulate GPU multiplication duration: ~" << avg_wmma / (num_tries) << "ms\n";
     ms = avg_wmma / (num_tries);
     printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
 
