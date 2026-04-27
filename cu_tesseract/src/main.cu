@@ -1,6 +1,5 @@
 #include "matrix.cuh"
 #include "kernels.cuh"
-#include "strassen_kernel.cuh"
 #include "utils.cuh"
 
 #include <iostream>
@@ -16,23 +15,23 @@ constexpr size_t n = 3072, k = 3072, m = 3072;
 
 
 void verify_cpu(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
-  A.cpu();
-  B.cpu();
-  C.cpu();
+    A.cpu();
+    B.cpu();
+    C.cpu();
 
-  for (size_t i = 0; i < n; i++) {
-    for (size_t j = 0; j < m; j++) {
-      fp32 sum = 0.0;
-      for (size_t r = 0; r < k; r++) {
-        sum += A.get(i, r) * B.get(r, j);
-      }
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < m; j++) {
+            fp32 sum = 0.0;
+            for (size_t r = 0; r < k; r++) {
+                sum += A.get(i, r) * B.get(r, j);
+            }
 
-      if (std::abs(sum - C.get(i, j)) >= 1e-4) {
-        cout << sum << ' ' << C.get(i, j) << " (" << i << ", " << j << ")\n";
-        throw std::runtime_error("verification failed");
-      }
+            if (std::abs(sum - C.get(i, j)) >= 1e-4) {
+                cout << sum << ' ' << C.get(i, j) << " (" << i << ", " << j << ")\n";
+                throw std::runtime_error("verification failed");
+            }
+        }
     }
-  }
 }
 
 std::chrono::duration<double, std::milli>
@@ -128,12 +127,16 @@ signed main() {
     }
 
     cout << "Blockwise GPU multiplication duration: ~" << avg_block / (num_tries) << "\n";
+    float ms = avg_block / (num_tries);
+    printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
 
     for (size_t i = 0; i < num_tries; i++) {
         avg_element += test_elementwise(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
     }
 
-  cout << "Elementwise GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
+    cout << "Elementwise GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
+    ms = avg_element / (num_tries);
+    printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
 
   for (size_t i = 0; i < num_tries; i++) {
     avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
@@ -146,10 +149,11 @@ signed main() {
       avg_wmma += test_wmma(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
   }
 
-  cout << "Warp Matrix Multiply-Accumulate GPU multiplication duration: ~" << avg_wmma / (num_tries) << "\n";
+    cout << "Warp Matrix Multiply-Accumulate GPU multiplication duration: ~" << avg_wmma / (num_tries) << "\n";
+    ms = avg_wmma / (num_tries);
+    printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
 
-  return 0;
+    return 0;
 }
 
-// nsys profile --gpu-metrics-devices=all --cpuctxsw=process-tree
-// --sample=process-tree -o test_profile ./cutesseract
+// nsys profile --gpu-metrics-devices=all --cpuctxsw=process-tree --sample=process-tree -o test_profile ./cutesseract
