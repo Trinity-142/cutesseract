@@ -10,8 +10,6 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O2 -Xptxas=-v")
 include_directories(../cu_tesseract/include)
 
 add_executable(cutesseract_test
-        test_main.cu,
-        ../cu_tesseract/src/matrix.cu
-        ../cu_tesseract/src/main.cu)
+        test_main.cu)
 
 target_link_libraries(cutesseract_test curand)

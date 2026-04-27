@@ -105,19 +105,7 @@ public:
         this->swap(other);
         return *this;
     }
-    __global__ void matrix_add_kernel(const T* A, const T* B, T* C, size_t numel) {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < numel) {
-            C[idx] = A[idx] + B[idx];
-        }
-    }
 
-    __global__ void matrix_sub_kernel(const T* A, const T* B, T* C, size_t numel) {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < numel) {
-            C[idx] = A[idx] - B[idx];
-        }
-    }
     __host__ Matrix operator+(const Matrix& other) const {
         assert(rows == other.rows && cols == other.cols);
         assert(layout == other.layout);
@@ -213,10 +201,10 @@ public:
             curandGenerator_t gen;
             curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
             curandSetPseudoRandomGeneratorSeed(gen, seed);
-            if (sizeof(T) == sizeof(fp32))
-                curandGenerateUniform(gen, device_ptr, rows * cols);
-            else
-                curandGenerateUniformDouble(gen, device_ptr, rows * cols);
+            assert (sizeof(T) == sizeof(fp32))
+            curandGenerateUniform(gen, device_ptr, rows * cols);
+            // else
+            //     curandGenerateUniformDouble(gen, device_ptr, rows * cols);
             curandDestroyGenerator(gen);
         } else {
             throw std::runtime_error("Random init not implemented for cpu");
