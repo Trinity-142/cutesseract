@@ -26,7 +26,12 @@ SMEM per SM - 128kb
 equal SMEM per Warp - 32kb
 
 */
-
+template <typename T, size_t N, size_t BS>
+static __global__ void _gemm_nnn_block_simple(
+    T *A, // row-wise
+    T *B, // row-wise
+    T *C // row-wise
+);
 
 template <typename T, size_t N, size_t BS>
 __host__ void _gemm_nn_block_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
@@ -86,6 +91,12 @@ static __global__ void _gemm_nnn_block_simple(
     }
 }
 
+template <typename T, size_t N, size_t K, size_t M> // n*k x k*m = n*m
+static __global__ void _gemm_nkm_simple(
+    T *A, // row-wise
+    T *B, // row-wise
+    T *C // row-wise
+);
 
 template <typename T, size_t N, size_t K, size_t M> // n*k x k*m = n*m
 __host__ void _gemm_nkm_simple_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
@@ -129,7 +140,9 @@ static __global__ void _gemm_nkm_simple(
     }
 }
 
-
+template <typename T, size_t N, size_t K, size_t M>
+__host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C);
+ 
 #define CUTOFF_SIZE 3072
 template <typename T, size_t N, size_t K, size_t M>
 __host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {

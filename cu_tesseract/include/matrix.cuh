@@ -201,7 +201,7 @@ public:
             curandGenerator_t gen;
             curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
             curandSetPseudoRandomGeneratorSeed(gen, seed);
-            assert (sizeof(T) == sizeof(fp32))
+            assert (sizeof(T) == sizeof(fp32));
             curandGenerateUniform(gen, device_ptr, rows * cols);
             // else
             //     curandGenerateUniformDouble(gen, device_ptr, rows * cols);
