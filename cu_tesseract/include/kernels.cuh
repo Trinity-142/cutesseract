@@ -116,8 +116,8 @@ __host__ void _gemm_nkm_simple_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C
     dim3 grid_dim((M + block_dim.x - 1) / block_dim.x,
                   (N + block_dim.y - 1) / block_dim.y);
 
-    cudaFuncSetCacheConfig(_gemm_nkm_simple<N, K, M>, cudaFuncCachePreferL1);
-    _gemm_nkm_simple<N, K, M><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+    cudaFuncSetCacheConfig(_gemm_nkm_simple<T, N, K, M>, cudaFuncCachePreferL1);
+    _gemm_nkm_simple<T, N, K, M><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
@@ -191,7 +191,7 @@ __host__ void _strassen_rec(const T* A, size_t lda,
         dim3 grid_dim((N + block_dim.x - 1) / block_dim.x,
                       (N + block_dim.y - 1) / block_dim.y);
 
-        gemm_base_square_kernel<N><<<grid_dim, block_dim>>>(A, lda, B, ldb, C, ldc);
+        gemm_base_square_kernel<T, N><<<grid_dim, block_dim>>>(A, lda, B, ldb, C, ldc);
         CUDA_CHECK(cudaDeviceSynchronize());
         return;
     } else {
@@ -234,39 +234,39 @@ __host__ void _strassen_rec(const T* A, size_t lda,
         // M1 = (A11 + A22) * (B11 + B22)
         add_square_kernel<H><<<grid_dim, block_dim>>>(A11, lda, A22, lda, S1.item(), H);
         add_square_kernel<H><<<grid_dim, block_dim>>>(B11, ldb, B22, ldb, S2.item(), H);
-        _strassen_rec<H>(S1.item(), H, S2.item(), H, P1.item(), H);
+        _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P1.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M2 = (A21 + A22) * B11
         add_square_kernel<H><<<grid_dim, block_dim>>>(A21, lda, A22, lda, S1.item(), H);
-        _strassen_rec<H>(S1.item(), H, B11, ldb, P2.item(), H);
+        _strassen_rec<T, H>(S1.item(), H, B11, ldb, P2.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M3 = A11 * (B12 - B22)
         sub_square_kernel<H><<<grid_dim, block_dim>>>(B12, ldb, B22, ldb, S2.item(), H);
-        _strassen_rec<H>(A11, lda, S2.item(), H, P3.item(), H);
+        _strassen_rec<T, H>(A11, lda, S2.item(), H, P3.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M4 = A22 * (B21 - B11)
         sub_square_kernel<H><<<grid_dim, block_dim>>>(B21, ldb, B11, ldb, S2.item(), H);
-        _strassen_rec<H>(A22, lda, S2.item(), H, P4.item(), H);
+        _strassen_rec<T, H>(A22, lda, S2.item(), H, P4.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M5 = (A11 + A12) * B22
         add_square_kernel<H><<<grid_dim, block_dim>>>(A11, lda, A12, lda, S1.item(), H);
-        _strassen_rec<H>(S1.item(), H, B22, ldb, P5.item(), H);
+        _strassen_rec<T, H>(S1.item(), H, B22, ldb, P5.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M6 = (A21 - A11) * (B11 + B12)
         sub_square_kernel<H><<<grid_dim, block_dim>>>(A21, lda, A11, lda, S1.item(), H);
         add_square_kernel<H><<<grid_dim, block_dim>>>(B11, ldb, B12, ldb, S2.item(), H);
-        _strassen_rec<H>(S1.item(), H, S2.item(), H, P6.item(), H);
+        _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P6.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M7 = (A12 - A22) * (B21 + B22)
         sub_square_kernel<H><<<grid_dim, block_dim>>>(A12, lda, A22, lda, S1.item(), H);
         add_square_kernel<H><<<grid_dim, block_dim>>>(B21, ldb, B22, ldb, S2.item(), H);
-        _strassen_rec<H>(S1.item(), H, S2.item(), H, P7.item(), H);
+        _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P7.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // Combine:
@@ -316,7 +316,7 @@ __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
     }
 
     if constexpr (N == K && K == M && (N == S)) {
-        _strassen_rec<S>(A.item(), N, B.item(), K, C.item(), M);
+        _strassen_rec<T, S>(A.item(), N, B.item(), K, C.item(), M);
         return;
     }
 
@@ -341,7 +341,7 @@ __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    _strassen_rec<S>(Ap.item(), S, Bp.item(), S, Cp.item(), S);
+    _strassen_rec<T, S>(Ap.item(), S, Bp.item(), S, Cp.item(), S);
 
     // Copy back only the valid N x M result.
     copy_rect_kernel<T><<<gridC, block_dim>>>(Cp.item(), S, C.item(), M, N, M);
