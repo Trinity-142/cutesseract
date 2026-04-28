@@ -52,8 +52,8 @@ __host__ void _gemm_nn_block_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) 
     dim3 block_dim(BS, BS); // x, y
     dim3 grid_dim(N / BS, N / BS);
 
-    cudaFuncSetCacheConfig(_gemm_nnn_block_simple<N, BS>, cudaFuncCachePreferShared);
-    _gemm_nnn_block_simple<N, BS><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+    cudaFuncSetCacheConfig(_gemm_nnn_block_simple<T, N, BS>, cudaFuncCachePreferShared);
+    _gemm_nnn_block_simple<T, N, BS><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
@@ -158,7 +158,7 @@ __host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) 
     B.cuda();
     C.cuda();
 
-    _gemm_strassen<N, K, M>(A, B, C);
+    _gemm_strassen<T, N, K, M>(A, B, C);
 }
 
 template <typename T>//                                   leading destination
@@ -311,7 +311,7 @@ __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
 
     // could be optimizable, do not care enough
     if constexpr (S <= CUTOFF_SIZE) {
-        _gemm_nkm_simple_launcher<N, K, M>(A, B, C);
+        _gemm_nkm_simple_launcher<T, N, K, M>(A, B, C);
         return;
     }
 

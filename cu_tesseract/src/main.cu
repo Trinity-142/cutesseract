@@ -37,7 +37,7 @@ void verify_cpu(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
 std::chrono::duration<double, std::milli> test_blockwise(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    _gemm_nn_block_launcher<n, 16>(A, B, C);
+    _gemm_nn_block_launcher<fp32, n, 16>(A, B, C);
 
 
     std::chrono::duration<double, std::milli> res = std::chrono::high_resolution_clock::now() - start_time;
@@ -49,7 +49,7 @@ std::chrono::duration<double, std::milli> test_blockwise(Matrix<fp32> &A, Matrix
 std::chrono::duration<double, std::milli> test_elementwise(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    _gemm_nkm_simple_launcher<n, k, m>(A, B, C);
+    _gemm_nkm_simple_launcher<fp32, n, k, m>(A, B, C);
 
     return std::chrono::high_resolution_clock::now() - start_time;
 
