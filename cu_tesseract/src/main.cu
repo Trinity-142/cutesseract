@@ -73,7 +73,7 @@ std::chrono::duration<double, std::milli> test_wmma(Matrix<fp32> &A, Matrix<fp32
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    _gemm_nn_wmma_launcher<n, k, m>(A_fp16, B_fp16, C);
+    _gemm_nkm_wmma_launcher<n, k, m>(A_fp16, B_fp16, C);
 
     std::chrono::duration<double, std::milli> res = std::chrono::high_resolution_clock::now() - start_time;
 
@@ -128,8 +128,8 @@ signed main() {
     }
 
     cout << "Blockwise GPU multiplication duration: ~" << avg_block / (num_tries) << "ms\n";
-    float ms = avg_block / (num_tries);
-    printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
+    std::chrono::duration<double, std::milli> ms = avg_block / (num_tries);
+    printf("TFLOPS: %.2f\n", (static_cast<std::chrono::duration<double, std::milli>>(n) * k * m * 2) / ms / 1e9);
 
     for (size_t i = 0; i < num_tries; i++) {
         avg_element += test_elementwise(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
@@ -137,7 +137,7 @@ signed main() {
 
     cout << "Elementwise GPU multiplication duration: ~" << avg_element / (num_tries) << "ms\n";
     ms = avg_element / (num_tries);
-    printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
+    printf("TFLOPS: %.2f\n", (static_cast<std::chrono::duration<double, std::milli>>(n) * k * m * 2) / ms / 1e9);
 
   for (size_t i = 0; i < num_tries; i++) {
     avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
@@ -152,7 +152,7 @@ signed main() {
 
     cout << "Warp Matrix Multiply-Accumulate GPU multiplication duration: ~" << avg_wmma / (num_tries) << "ms\n";
     ms = avg_wmma / (num_tries);
-    printf("TFLOPS: %.2f\n", ((double)n * k * m * 2) / ms / 1e9);
+    printf("TFLOPS: %.2f\n", (static_cast<std::chrono::duration<double, std::milli>>(n) * k * m * 2) / ms / 1e9);
 
     for (size_t i = 0; i < num_tries; i++) {
         avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
