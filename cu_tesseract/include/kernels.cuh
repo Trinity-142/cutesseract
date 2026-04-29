@@ -231,20 +231,20 @@ __host__ void _strassen_rec(const T* A, size_t lda,
         constexpr size_t H = N / 2;
 
         // Quadrant pointers for row-wise layout.
-        const fp32* A11 = A;
-        const fp32* A12 = A + H;
-        const fp32* A21 = A + H * lda;
-        const fp32* A22 = A + H * lda + H;
+        const T* A11 = A;
+        const T* A12 = A + H;
+        const T* A21 = A + H * lda;
+        const T* A22 = A + H * lda + H;
 
-        const fp32* B11 = B;
-        const fp32* B12 = B + H;
-        const fp32* B21 = B + H * ldb;
-        const fp32* B22 = B + H * ldb + H;
+        const T* B11 = B;
+        const T* B12 = B + H;
+        const T* B21 = B + H * ldb;
+        const T* B22 = B + H * ldb + H;
 
-        fp32* C11 = C;
-        fp32* C12 = C + H;
-        fp32* C21 = C + H * ldc;
-        fp32* C22 = C + H * ldc + H;
+        T* C11 = C;
+        T* C12 = C + H;
+        T* C21 = C + H * ldc;
+        T* C22 = C + H * ldc + H;
 
         // Scratch matrices.
         Matrix<T> S1(H, H, ROW_WISE, CUDA);
@@ -265,59 +265,59 @@ __host__ void _strassen_rec(const T* A, size_t lda,
                       (H + block_dim.y - 1) / block_dim.y);
 
         // M1 = (A11 + A22) * (B11 + B22)
-        add_square_kernel<H><<<grid_dim, block_dim>>>(A11, lda, A22, lda, S1.item(), H);
-        add_square_kernel<H><<<grid_dim, block_dim>>>(B11, ldb, B22, ldb, S2.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(A11, lda, A22, lda, S1.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(B11, ldb, B22, ldb, S2.item(), H);
         _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P1.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M2 = (A21 + A22) * B11
-        add_square_kernel<H><<<grid_dim, block_dim>>>(A21, lda, A22, lda, S1.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(A21, lda, A22, lda, S1.item(), H);
         _strassen_rec<T, H>(S1.item(), H, B11, ldb, P2.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M3 = A11 * (B12 - B22)
-        sub_square_kernel<H><<<grid_dim, block_dim>>>(B12, ldb, B22, ldb, S2.item(), H);
+        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(B12, ldb, B22, ldb, S2.item(), H);
         _strassen_rec<T, H>(A11, lda, S2.item(), H, P3.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M4 = A22 * (B21 - B11)
-        sub_square_kernel<H><<<grid_dim, block_dim>>>(B21, ldb, B11, ldb, S2.item(), H);
+        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(B21, ldb, B11, ldb, S2.item(), H);
         _strassen_rec<T, H>(A22, lda, S2.item(), H, P4.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M5 = (A11 + A12) * B22
-        add_square_kernel<H><<<grid_dim, block_dim>>>(A11, lda, A12, lda, S1.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(A11, lda, A12, lda, S1.item(), H);
         _strassen_rec<T, H>(S1.item(), H, B22, ldb, P5.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M6 = (A21 - A11) * (B11 + B12)
-        sub_square_kernel<H><<<grid_dim, block_dim>>>(A21, lda, A11, lda, S1.item(), H);
-        add_square_kernel<H><<<grid_dim, block_dim>>>(B11, ldb, B12, ldb, S2.item(), H);
+        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(A21, lda, A11, lda, S1.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(B11, ldb, B12, ldb, S2.item(), H);
         _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P6.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M7 = (A12 - A22) * (B21 + B22)
-        sub_square_kernel<H><<<grid_dim, block_dim>>>(A12, lda, A22, lda, S1.item(), H);
-        add_square_kernel<H><<<grid_dim, block_dim>>>(B21, ldb, B22, ldb, S2.item(), H);
+        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(A12, lda, A22, lda, S1.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(B21, ldb, B22, ldb, S2.item(), H);
         _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P7.item(), H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // Combine:
         // C11 = P1 + P4 - P5 + P7
-        add_square_kernel<H><<<grid_dim, block_dim>>>(P1.item(), H, P4.item(), H, T1.item(), H);
-        sub_square_kernel<H><<<grid_dim, block_dim>>>(T1.item(), H, P5.item(), H, T2.item(), H);
-        add_square_kernel<H><<<grid_dim, block_dim>>>(T2.item(), H, P7.item(), H, C11, ldc);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(P1.item(), H, P4.item(), H, T1.item(), H);
+        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(T1.item(), H, P5.item(), H, T2.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(T2.item(), H, P7.item(), H, C11, ldc);
 
         // C12 = P3 + P5
-        add_square_kernel<H><<<grid_dim, block_dim>>>(P3.item(), H, P5.item(), H, C12, ldc);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(P3.item(), H, P5.item(), H, C12, ldc);
 
         // C21 = P2 + P4
-        add_square_kernel<H><<<grid_dim, block_dim>>>(P2.item(), H, P4.item(), H, C21, ldc);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(P2.item(), H, P4.item(), H, C21, ldc);
 
         // C22 = P1 - P2 + P3 + P6
-        sub_square_kernel<H><<<grid_dim, block_dim>>>(P1.item(), H, P2.item(), H, T1.item(), H);
-        add_square_kernel<H><<<grid_dim, block_dim>>>(T1.item(), H, P3.item(), H, T2.item(), H);
-        add_square_kernel<H><<<grid_dim, block_dim>>>(T2.item(), H, P6.item(), H, C22, ldc);
+        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(P1.item(), H, P2.item(), H, T1.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(T1.item(), H, P3.item(), H, T2.item(), H);
+        add_square_kernel<T, H><<<grid_dim, block_dim>>>(T2.item(), H, P6.item(), H, C22, ldc);
 
         CUDA_CHECK(cudaDeviceSynchronize());
         return;
