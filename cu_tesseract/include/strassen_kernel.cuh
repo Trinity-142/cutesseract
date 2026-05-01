@@ -11,7 +11,7 @@
 template <typename T, size_t N, size_t K, size_t M>
 __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C);
  
-#define CUTOFF_SIZE 3072
+#define CUTOFF_SIZE 256
 template <typename T, size_t N, size_t K, size_t M>
 __host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
     assert(A.shape().first == N && A.shape().second == K);
