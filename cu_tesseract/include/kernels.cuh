@@ -121,3 +121,21 @@ __host__ void _gemm_nkm_simple_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
+template <typename T, size_t N, size_t K, size_t M>
+static __global__ void _gemm_nkm_simple(
+    T *A, // row-wise
+    T *B, // row-wise
+    T *C // row-wise
+) {
+    size_t row = blockIdx.y * blockDim.y + threadIdx.y;
+    size_t col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < N && col < M) {
+        T sum = 0;
+        for (size_t i = 0; i < K; i++) {
+            sum += A[row * K + i] * B[i * M + col];
+        }
+        C[row * M + col] = sum;
+    }
+}
+
