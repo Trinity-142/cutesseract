@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     g++ \
     make \
     gdb \
+    git \
     ninja-build \
     && rm -rf /var/lib/apt/lists/*
 ```

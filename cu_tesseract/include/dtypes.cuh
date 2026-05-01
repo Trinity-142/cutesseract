@@ -1,5 +1,5 @@
-#ifndef TYPES_HPP
-#define TYPES_HPP
+#ifndef DTYPES_HPP
+#define DTYPES_HPP
 
 #include <cstddef>
 
