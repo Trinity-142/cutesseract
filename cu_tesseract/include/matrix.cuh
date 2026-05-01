@@ -37,13 +37,13 @@ class Matrix {
     DataLayout layout;
     DataDevice device;
 
-    size_t rows, cols, numel;
+    size_t rows, cols, num_elements;
 public:
 
-    __host__ Matrix(size_t rows, size_t cols, DataLayout layout, DataDevice device): rows(rows), cols(cols), device(device), layout(layout), numel(sizeof(T) * rows * cols) {
+    __host__ Matrix(size_t rows, size_t cols, DataLayout layout, DataDevice device): rows(rows), cols(cols), device(device), layout(layout), num_elements(sizeof(T) * rows * cols) {
 
         if (device == CUDA) {
-            CUDA_CHECK(cudaMalloc(&device_ptr, numel));
+            CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
             cpu_ptr = nullptr;
         } else {
             cpu_ptr = new T[rows * cols];
@@ -60,20 +60,20 @@ public:
         }
     }
 
-    __host__ Matrix(const Matrix& other): cpu_ptr(nullptr), device_ptr(nullptr), rows(other.rows), cols(other.cols), numel(other.numel), layout(other.layout), device(other.device) {
+    __host__ Matrix(const Matrix& other): cpu_ptr(nullptr), device_ptr(nullptr), rows(other.rows), cols(other.cols), num_elements(other.num_elements), layout(other.layout), device(other.device) {
         if (device == CPU) {
             cpu_ptr = new T[rows * cols];
-            memcpy(cpu_ptr, other.cpu_ptr, numel);
+            memcpy(cpu_ptr, other.cpu_ptr, num_elements);
         } else {
-            CUDA_CHECK(cudaMalloc(&device_ptr, numel));
-            cudaMemcpy(device_ptr, other.device_ptr, numel, cudaMemcpyDeviceToDevice);
+            CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
+            cudaMemcpy(device_ptr, other.device_ptr, num_elements, cudaMemcpyDeviceToDevice);
         }
     }
 
     __host__ Matrix& operator=(const Matrix& other) {
         rows = other.rows;
         cols = other.cols;
-        numel = other.numel;
+        num_elements = other.num_elements;
         layout = other.layout;
 
 
@@ -90,19 +90,99 @@ public:
 
         if (device == CPU) {
             cpu_ptr = new T[rows * cols];
-            memcpy(cpu_ptr, other.cpu_ptr, numel);
+            memcpy(cpu_ptr, other.cpu_ptr, num_elements);
         } else {
-            CUDA_CHECK(cudaMalloc(&device_ptr, numel));
-            cudaMemcpy(device_ptr, other.device_ptr, numel, cudaMemcpyDeviceToDevice);
+            CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
+            cudaMemcpy(device_ptr, other.device_ptr, num_elements, cudaMemcpyDeviceToDevice);
         }
     }
 
-    __host__ Matrix(Matrix&& other): cpu_ptr(nullptr), device_ptr(nullptr), rows(0), cols(0), numel(0), layout(ROW_WISE), device(CPU) {
+    __host__ Matrix(Matrix&& other): cpu_ptr(nullptr), device_ptr(nullptr), rows(0), cols(0), num_elements(0), layout(ROW_WISE), device(CPU) {
         this->swap(other);
     }
 
     __host__ Matrix& operator=(Matrix&& other) {
         this->swap(other);
+        return *this;
+    }
+
+    __host__ Matrix operator+(const Matrix& other) const {
+        assert(rows == other.rows && cols == other.cols);
+        assert(layout == other.layout);
+        assert(device == other.device);
+
+        Matrix result(rows, cols, layout, device);
+
+        if (device == CPU) {
+            for (size_t i = 0; i < rows * cols; ++i) {
+                result.cpu_ptr[i] = cpu_ptr[i] + other.cpu_ptr[i];
+            }
+        } else {
+            dim3 block(256);
+            dim3 grid((rows * cols + block.x - 1) / block.x);
+            matrix_add_kernel<T><<<grid, block>>>(device_ptr, other.device_ptr, result.device_ptr, num_elements / sizeof(T));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+
+        return result;
+    }
+
+    __host__ Matrix operator-(const Matrix& other) const {
+        assert(rows == other.rows && cols == other.cols);
+        assert(layout == other.layout);
+        assert(device == other.device);
+
+        Matrix result(rows, cols, layout, device);
+
+        if (device == CPU) {
+            for (size_t i = 0; i < rows * cols; ++i) {
+                result.cpu_ptr[i] = cpu_ptr[i] - other.cpu_ptr[i];
+            }
+        } else {
+            dim3 block(256);
+            dim3 grid((rows * cols + block.x - 1) / block.x);
+            matrix_sub_kernel<T><<<grid, block>>>(device_ptr, other.device_ptr, result.device_ptr, num_elements / sizeof(T));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+
+        return result;
+    }
+
+    __host__ Matrix& operator+=(const Matrix& other) {
+        assert(rows == other.rows && cols == other.cols);
+        assert(layout == other.layout);
+        assert(device == other.device);
+
+        if (device == CPU) {
+            for (size_t i = 0; i < rows * cols; ++i) {
+                cpu_ptr[i] += other.cpu_ptr[i];
+            }
+        } else {
+            dim3 block(256);
+            dim3 grid((rows * cols + block.x - 1) / block.x);
+            matrix_add_kernel<T><<<grid, block>>>(device_ptr, other.device_ptr, device_ptr, num_elements / sizeof(T));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+
+        return *this;
+    }
+
+    __host__ Matrix& operator-=(const Matrix& other) {
+        assert(rows == other.rows && cols == other.cols);
+        assert(layout == other.layout);
+        assert(device == other.device);
+
+        if (device == CPU) {
+            for (size_t i = 0; i < rows * cols; ++i) {
+                cpu_ptr[i] -= other.cpu_ptr[i];
+            }
+        } else {
+            dim3 block(256);
+            dim3 grid((rows * cols + block.x - 1) / block.x);
+            matrix_sub_kernel<T><<<grid, block>>>(device_ptr, other.device_ptr, device_ptr, num_elements / sizeof(T));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+
         return *this;
     }
 
@@ -113,7 +193,7 @@ public:
         std::swap(device, other.device);
         std::swap(rows, other.rows);
         std::swap(cols, other.cols);
-        std::swap(numel, other.numel);
+        std::swap(num_elements, other.num_elements);
     }
 
     __host__ void fill_random(unsigned long long seed = 812ULL) {
@@ -147,7 +227,7 @@ public:
         device = CPU;
 
         cpu_ptr = new T[cols * rows];
-        CUDA_CHECK(cudaMemcpy(cpu_ptr, device_ptr, numel, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(cpu_ptr, device_ptr, num_elements, cudaMemcpyDeviceToHost));
         CUDA_CHECK(cudaFree(device_ptr));
 
         device_ptr = nullptr;
@@ -158,8 +238,8 @@ public:
 
         device = CUDA;
 
-        CUDA_CHECK(cudaMalloc(&device_ptr, numel));
-        CUDA_CHECK(cudaMemcpy(device_ptr, cpu_ptr, numel, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
+        CUDA_CHECK(cudaMemcpy(device_ptr, cpu_ptr, num_elements, cudaMemcpyHostToDevice));
 
         delete[] cpu_ptr;
         cpu_ptr = nullptr;
@@ -179,6 +259,7 @@ public:
         T* new_buffer = new T[rows * cols];
 
         if (device == CUDA) {
+            delete[] new_buffer;
             throw std::runtime_error(".to_layout not implemented for CUDA. consider using .cpu()");
         } else {
             for (size_t i = 0; i < rows; i++) {
