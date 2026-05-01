@@ -1,5 +1,6 @@
 #include "matrix.cuh"
 #include "kernels.cuh"
+#include "strassen_kernel.cuh"
 #include "utils.cuh"
 
 #include <iostream>
@@ -63,7 +64,7 @@ std::chrono::duration<double, std::milli> test_strassen(Matrix<fp32> &A, Matrix<
 
     return std::chrono::high_resolution_clock::now() - start_time;
 
-    // verify_cpu(A, B, C);
+    verify_cpu(A, B, C);
 }
 
 signed main() {
