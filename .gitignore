@@ -43,3 +43,5 @@
 
 cu_tesseract/build/
 build/
+
+.env
