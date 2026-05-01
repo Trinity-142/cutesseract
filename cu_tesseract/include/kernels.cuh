@@ -1,12 +1,10 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <mma.h>
 
 #include "dtypes.cuh"
 #include "matrix.cuh"
 #include "utils.cuh"
-using namespace nvcuda;
 
 
 /*
@@ -23,7 +21,6 @@ Max waprs in SM - 48
 Max Block per SM - 16!!
 
 Tensor Core count - 112
-Tensor Cores per SM - 4
 
 SMEM per SM - 128kb
 equal SMEM per Warp - 32kb
