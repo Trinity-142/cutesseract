@@ -300,14 +300,6 @@ public:
         return {rows, cols};
     }
 
-    __host__ size_t rows_num() const {
-        return rows;
-    }
-
-    __host__ size_t cols_num() const {
-        return cols;
-    }
-
     __host__ size_t rows() const {
         return rows;
     }
