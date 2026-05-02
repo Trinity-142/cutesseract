@@ -300,6 +300,22 @@ public:
         return {rows, cols};
     }
 
+    __host__ size_t rows_num() const {
+        return rows;
+    }
+
+    __host__ size_t cols_num() const {
+        return cols;
+    }
+
+    __host__ size_t rows() const {
+        return rows;
+    }
+
+    __host__ size_t cols() const {
+        return cols;
+    }
+
     __host__ DataLayout get_layout() const {
         return layout;
     }
@@ -318,6 +334,21 @@ public:
             return cpu_ptr[i * cols + j];
         } else {
             return cpu_ptr[i + j * rows];
+        }
+    }
+
+    __host__ void set(size_t i, size_t j, T val) {
+        if (i >= rows || j >= cols) {
+            throw std::out_of_range("Index out of bounds");
+        }
+        if (device == CUDA) {
+            throw std::runtime_error("data must be on cpu to set value. consider calling .cpu()");
+        }
+
+        if (layout == ROW_WISE) {
+            cpu_ptr[i * cols + j] = val;
+        } else {
+            cpu_ptr[i + j * rows] = val;
         }
     }
 };

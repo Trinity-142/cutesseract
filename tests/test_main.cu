@@ -142,14 +142,11 @@ void iterative_stress_test(KernelFunc kernel) {
     }
 }
 
-template <typename T>
 void menu() {
-    map<string, KernelFunc> kernel_registry = {
-        {"Simple",  _gemm_nkm_simple_launcher},
-        {"Blocked", _gemm_nn_block_launcher},
-        {"Strassen", _gemm_strassen_launcher},
-
-    };
+    map<string, KernelFunc> kernel_registry;
+    kernel_registry["Simple"] = _gemm_nkm_simple_launcher<fp32>;
+    kernel_registry["Blocked"] = [](Matrix<fp32>& A, Matrix<fp32>& B, Matrix<fp32>& C) { _gemm_nn_block_launcher<fp32>(A, B, C); };
+    kernel_registry["Strassen"] = _gemm_strassen_launcher<fp32>;
 
     while (true) {
         cout << "\n=== CuTesseract Test CLI ===" << endl;
@@ -188,6 +185,6 @@ void menu() {
 }
 
 int main() {
-    menu<fp32>();
+    menu();
     return 0;
 }
