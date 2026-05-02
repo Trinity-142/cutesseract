@@ -38,11 +38,12 @@ template <typename T>
 T calculate_max_diff(Matrix<T>& A, Matrix<T>& B) {
     A.cpu();
     B.cpu();
-    assert(A.rows() == B.rows());
-    assert(A.cols() == B.cols());
+    std::pair <size_t, size_t> shapeA = A.shape();
+    std::pair <size_t, size_t> shapeB = B.shape();
+    assert(shapeA == shapeB);
     T max_diff = 0.0;
-    for (size_t i = 0; i < A.rows(); i++) {
-        for (size_t j = 0; j < A.cols(); j++) {
+    for (size_t i = 0; i < shapeA.first; i++) {
+        for (size_t j = 0; j < shapeA.second; j++) {
             T diff = std::abs(A.get(i, j) - B.get(i, j));
             if (diff > max_diff) {
                 max_diff = diff;
@@ -54,12 +55,15 @@ T calculate_max_diff(Matrix<T>& A, Matrix<T>& B) {
 
 template <typename T>
 Matrix<T> mmul_cpu(Matrix<T>& A, Matrix<T>& B) {
-    assert(A.cols() == B.rows());
-    Matrix<T> C(A.rows(), B.cols(), ROW_WISE, CPU);
-    for(size_t i = 0; i < A.rows(); i++) {
-        for (size_t j = 0; j < B.cols(); j++) {
+    std::pair <size_t, size_t> shapeA = A.shape();
+    std::pair <size_t, size_t> shapeB = B.shape();
+
+    assert(shapeA.second == shapeB.first);
+    Matrix<T> C(shapeA.first, shapeB.second, ROW_WISE, CPU);
+    for(size_t i = 0; i < shapeA.first; i++) {
+        for (size_t j = 0; j < shapeB.second; j++) {
             T sum = 0.0;
-            for (size_t r = 0; r < A.cols(); r++) {
+            for (size_t r = 0; r < shapeA.second; r++) {
                 sum += A.get(i, r) * B.get(r, j);
             }
             C.set(i, j, sum);
@@ -70,8 +74,11 @@ Matrix<T> mmul_cpu(Matrix<T>& A, Matrix<T>& B) {
 
 template <typename T>
 void print_heatmap(Matrix<T>& GPU_C, Matrix<T>& CPU_C, T precision) {
-    size_t rows = GPU_C.rows();
-    size_t cols = GPU_C.cols();
+    std::pair <size_t, size_t> shapeGPU = GPU_C.shape();
+    std::pair <size_t, size_t> shapeCPU = CPU_C.shape();
+    assert(shapeGPU == shapeCPU);
+    size_t rows = shapeGPU.first;
+    size_t cols = shapeGPU.second;
     size_t grid_r = std::min(rows, (size_t)32);
     size_t grid_c = std::min(cols, (size_t)32);
     size_t step_r = rows / grid_r;
@@ -105,27 +112,22 @@ void verify_result(Matrix<fp32>& GPU_C, Matrix<fp32>& CPU_C, fp32 precision = 1e
     }
 }
 
-template <typename T>
-void fill_matrix(Matrix<T>& M, FillType type, unsigned long long seed) {
-    if (type == FillType::RANDOM) {
-        M.fill_random(seed);
-    } else {
-        M.cpu();
-        M.to_layout(ROW_WISE);
-        for (size_t i = 0; i < M.rows(); i++)
-            for (size_t j = 0; j < M.cols(); j++)
-                M.set(i, j, (type == FillType::ONES ? 1.0f : 0.0f));
-        M.cuda();
-    }
-}
-
 void run_test(KernelFunc kernel, size_t N, size_t K, size_t M, FillType fill, int runs = RUNS_NUM) {
     for (int i = 0; i < runs; i++) {
         Matrix<fp32> A(N, K, ROW_WISE, CUDA);
         Matrix<fp32> B(K, M, ROW_WISE, CUDA);
         Matrix<fp32> G(N, M, ROW_WISE, CUDA);
-        fill_matrix(A, fill, (unsigned long long)i);
-        fill_matrix(B, fill, (unsigned long long)i + 1337);
+
+        if (fill == FillType::RANDOM) {
+            A.fill_random((unsigned long long)i);
+            B.fill_random((unsigned long long)i + 1337);
+        } else if (fill == FillType::ONES) {
+            A.ones();
+            B.ones();
+        } else if (fill == FillType::ZEROS) {
+            A.zeros();
+            B.zeros();
+        }
 
         kernel(A, B, G);
 

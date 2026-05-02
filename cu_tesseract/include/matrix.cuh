@@ -211,13 +211,26 @@ public:
         }
     }
 
-    __host__ void ones() {
-        assert(device == CPU && layout == ROW_WISE);
+    __host__ void fill_const(T val) {
+        if (device == CUDA) {
+            T* h_ptr = new T[rows * cols];
+            for (size_t i = 0; i < rows * cols; i++) h_ptr[i] = val;
+            CUDA_CHECK(cudaMemcpy(device_ptr, h_ptr, num_elements, cudaMemcpyHostToDevice));
+            delete[] h_ptr;
+        } else {
+            for (size_t i = 0; i < rows * cols; i++) cpu_ptr[i] = val;
+        }
+    }
 
-        for (size_t i = 0; i < rows; i++) {
-            for (size_t j = 0; j < cols; j++) {
-                cpu_ptr[i * cols + j] = (T)1.0;
-            }
+    __host__ void ones() {
+        fill_const((T)1.0);
+    }
+
+    __host__ void zeros() {
+        if (device == CUDA) {
+            CUDA_CHECK(cudaMemset(device_ptr, 0, num_elements));
+        } else {
+            memset(cpu_ptr, 0, num_elements);
         }
     }
 
@@ -298,14 +311,6 @@ public:
 
     __host__ std::pair<size_t, size_t> shape() const {
         return {rows, cols};
-    }
-
-    __host__ size_t rows() const {
-        return rows;
-    }
-
-    __host__ size_t cols() const {
-        return cols;
     }
 
     __host__ DataLayout get_layout() const {
