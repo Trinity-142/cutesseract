@@ -11,6 +11,7 @@
 
 #include "matrix.cuh"
 #include "kernels.cuh"
+#include "strassen_kernel.cuh"
 #include "test_class_matrix.cu"
 
 using std::cout;
@@ -141,10 +142,13 @@ void iterative_stress_test(KernelFunc kernel) {
     }
 }
 
+template <typename T>
 void menu() {
     map<string, KernelFunc> kernel_registry = {
-        {"Simple", simple_launcher},
-        {"Blocked", blocked_launcher}
+        {"Simple",  _gemm_nkm_simple_launcher},
+        {"Blocked", _gemm_nn_block_launcher},
+        {"Strassen", _gemm_strassen_launcher},
+
     };
 
     while (true) {
@@ -184,6 +188,6 @@ void menu() {
 }
 
 int main() {
-    menu();
+    menu<fp32>();
     return 0;
 }

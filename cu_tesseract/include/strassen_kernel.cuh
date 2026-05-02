@@ -8,14 +8,17 @@
 #include "kernels.cuh"
 
 
-template <typename T, size_t N, size_t K, size_t M>
+template <typename T>
 __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C);
  
 #define CUTOFF_SIZE 256
-template <typename T, size_t N, size_t K, size_t M>
+template <typename T>
 __host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
-    assert(A.shape().first == N && A.shape().second == K);
-    assert(B.shape().first == K && B.shape().second == M);
+    size_t N = A.shape().first;
+    size_t K = A.shape().second;
+    size_t M = B.shape().second;
+
+    assert(B.shape().first == K);
     assert(C.shape().first == N && C.shape().second == M);
 
     assert(A.get_layout() == ROW_WISE);
@@ -26,7 +29,7 @@ __host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) 
     B.cuda();
     C.cuda();
 
-    _gemm_strassen<T, N, K, M>(A, B, C);
+    _gemm_strassen<T>(A, B, C);
 }
 
 template <typename T>//                                   leading destination
@@ -50,8 +53,8 @@ constexpr size_t next_pow2(size_t x) {
 }
 
 
-template <typename T, size_t N>
-__global__ void add_square_kernel(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc) {
+template <typename T>
+__global__ void add_square_kernel(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc, size_t N) {
     size_t row = blockIdx.y * blockDim.y + threadIdx.y;
     size_t col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < N && col < N) {
@@ -59,8 +62,8 @@ __global__ void add_square_kernel(const T* A, size_t lda, const T* B, size_t ldb
     }
 }
 
-template <typename T, size_t N>
-__global__ void sub_square_kernel(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc) {
+template <typename T>
+__global__ void sub_square_kernel(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc, size_t N) {
     size_t row = blockIdx.y * blockDim.y + threadIdx.y;
     size_t col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < N && col < N) {
@@ -68,8 +71,8 @@ __global__ void sub_square_kernel(const T* A, size_t lda, const T* B, size_t ldb
     }
 }
 
-template <typename T, size_t N>
-__global__ void gemm_base_square_kernel(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc) {
+template <typename T>
+__global__ void gemm_base_square_kernel(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc, size_t N) {
     size_t row = blockIdx.y * blockDim.y + threadIdx.y;
     size_t col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < N && col < N) {
@@ -83,20 +86,21 @@ __global__ void gemm_base_square_kernel(const T* A, size_t lda, const T* B, size
 
 
 
-template <typename T, size_t N>
+template <typename T>
 __host__ void _strassen_rec(const T* A, size_t lda,
                             const T* B, size_t ldb,
-                            T* C, size_t ldc) {
-    if constexpr (N <= CUTOFF_SIZE) {
+                            T* C, size_t ldc,
+                            size_t N) {
+    if (N <= CUTOFF_SIZE) {
         dim3 block_dim(16, 16);
         dim3 grid_dim((N + block_dim.x - 1) / block_dim.x,
                       (N + block_dim.y - 1) / block_dim.y);
 
-        gemm_base_square_kernel<T, N><<<grid_dim, block_dim>>>(A, lda, B, ldb, C, ldc);
+        gemm_base_square_kernel<T><<<grid_dim, block_dim>>>(A, lda, B, ldb, C, ldc, N);
         CUDA_CHECK(cudaDeviceSynchronize());
         return;
     } else {
-        constexpr size_t H = N / 2;
+        size_t H = N / 2;
 
         // Quadrant pointers for row-wise layout.
         const T* A11 = A;
@@ -133,59 +137,59 @@ __host__ void _strassen_rec(const T* A, size_t lda,
                       (H + block_dim.y - 1) / block_dim.y);
 
         // M1 = (A11 + A22) * (B11 + B22)
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(A11, lda, A22, lda, S1.item(), H);
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(B11, ldb, B22, ldb, S2.item(), H);
-        _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P1.item(), H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(A11, lda, A22, lda, S1.item(), H, H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(B11, ldb, B22, ldb, S2.item(), H, H);
+        _strassen_rec<T>(S1.item(), H, S2.item(), H, P1.item(), H, H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M2 = (A21 + A22) * B11
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(A21, lda, A22, lda, S1.item(), H);
-        _strassen_rec<T, H>(S1.item(), H, B11, ldb, P2.item(), H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(A21, lda, A22, lda, S1.item(), H, H);
+        _strassen_rec<T>(S1.item(), H, B11, ldb, P2.item(), H, H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M3 = A11 * (B12 - B22)
-        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(B12, ldb, B22, ldb, S2.item(), H);
-        _strassen_rec<T, H>(A11, lda, S2.item(), H, P3.item(), H);
+        sub_square_kernel<T><<<grid_dim, block_dim>>>(B12, ldb, B22, ldb, S2.item(), H, H);
+        _strassen_rec<T>(A11, lda, S2.item(), H, P3.item(), H, H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M4 = A22 * (B21 - B11)
-        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(B21, ldb, B11, ldb, S2.item(), H);
-        _strassen_rec<T, H>(A22, lda, S2.item(), H, P4.item(), H);
+        sub_square_kernel<T><<<grid_dim, block_dim>>>(B21, ldb, B11, ldb, S2.item(), H, H);
+        _strassen_rec<T>(A22, lda, S2.item(), H, P4.item(), H, H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M5 = (A11 + A12) * B22
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(A11, lda, A12, lda, S1.item(), H);
-        _strassen_rec<T, H>(S1.item(), H, B22, ldb, P5.item(), H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(A11, lda, A12, lda, S1.item(), H, H);
+        _strassen_rec<T>(S1.item(), H, B22, ldb, P5.item(), H, H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M6 = (A21 - A11) * (B11 + B12)
-        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(A21, lda, A11, lda, S1.item(), H);
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(B11, ldb, B12, ldb, S2.item(), H);
-        _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P6.item(), H);
+        sub_square_kernel<T><<<grid_dim, block_dim>>>(A21, lda, A11, lda, S1.item(), H, H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(B11, ldb, B12, ldb, S2.item(), H, H);
+        _strassen_rec<T>(S1.item(), H, S2.item(), H, P6.item(), H, H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // M7 = (A12 - A22) * (B21 + B22)
-        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(A12, lda, A22, lda, S1.item(), H);
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(B21, ldb, B22, ldb, S2.item(), H);
-        _strassen_rec<T, H>(S1.item(), H, S2.item(), H, P7.item(), H);
+        sub_square_kernel<T><<<grid_dim, block_dim>>>(A12, lda, A22, lda, S1.item(), H, H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(B21, ldb, B22, ldb, S2.item(), H, H);
+        _strassen_rec<T>(S1.item(), H, S2.item(), H, P7.item(), H, H);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // Combine:
         // C11 = P1 + P4 - P5 + P7
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(P1.item(), H, P4.item(), H, T1.item(), H);
-        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(T1.item(), H, P5.item(), H, T2.item(), H);
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(T2.item(), H, P7.item(), H, C11, ldc);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(P1.item(), H, P4.item(), H, T1.item(), H, H);
+        sub_square_kernel<T><<<grid_dim, block_dim>>>(T1.item(), H, P5.item(), H, T2.item(), H, H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(T2.item(), H, P7.item(), H, C11, ldc, H);
 
         // C12 = P3 + P5
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(P3.item(), H, P5.item(), H, C12, ldc);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(P3.item(), H, P5.item(), H, C12, ldc, H);
 
         // C21 = P2 + P4
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(P2.item(), H, P4.item(), H, C21, ldc);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(P2.item(), H, P4.item(), H, C21, ldc, H);
 
         // C22 = P1 - P2 + P3 + P6
-        sub_square_kernel<T, H><<<grid_dim, block_dim>>>(P1.item(), H, P2.item(), H, T1.item(), H);
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(T1.item(), H, P3.item(), H, T2.item(), H);
-        add_square_kernel<T, H><<<grid_dim, block_dim>>>(T2.item(), H, P6.item(), H, C22, ldc);
+        sub_square_kernel<T><<<grid_dim, block_dim>>>(P1.item(), H, P2.item(), H, T1.item(), H, H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(T1.item(), H, P3.item(), H, T2.item(), H, H);
+        add_square_kernel<T><<<grid_dim, block_dim>>>(T2.item(), H, P6.item(), H, C22, ldc, H);
 
         CUDA_CHECK(cudaDeviceSynchronize());
         return;
@@ -194,10 +198,13 @@ __host__ void _strassen_rec(const T* A, size_t lda,
 
 
 
-template <typename T, size_t N, size_t K, size_t M>
+template <typename T>
 __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
-    assert(A.shape().first == N && A.shape().second == K);
-    assert(B.shape().first == K && B.shape().second == M);
+    size_t N = A.shape().first;
+    size_t K = A.shape().second;
+    size_t M = B.shape().second;
+
+    assert(B.shape().first == K);
     assert(C.shape().first == N && C.shape().second == M);
 
     assert(A.get_layout() == ROW_WISE);
@@ -208,16 +215,16 @@ __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
     B.cuda();
     C.cuda();
 
-    constexpr size_t S = next_pow2(max3(N, K, M)); // typa kvadrat
+    size_t S = next_pow2(max3(N, K, M)); // typa kvadrat
 
     // could be optimizable, do not care enough
-    if constexpr (S <= CUTOFF_SIZE) {
-        _gemm_nkm_simple_launcher<T, N, K, M>(A, B, C);
+    if (S <= CUTOFF_SIZE) {
+        _gemm_nkm_simple_launcher<T>(A, B, C);
         return;
     }
 
-    if constexpr (N == K && K == M && (N == S)) {
-        _strassen_rec<T, S>(A.item(), N, B.item(), K, C.item(), M);
+    if (N == K && K == M && (N == S)) {
+        _strassen_rec<T>(A.item(), N, B.item(), K, C.item(), M, S);
         return;
     }
 
@@ -242,10 +249,9 @@ __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    _strassen_rec<T, S>(Ap.item(), S, Bp.item(), S, Cp.item(), S);
+    _strassen_rec<T>(Ap.item(), S, Bp.item(), S, Cp.item(), S, S);
 
     // Copy back only the valid N x M result.
     copy_rect_kernel<T><<<gridC, block_dim>>>(Cp.item(), S, C.item(), M, N, M);
     CUDA_CHECK(cudaDeviceSynchronize());
 }
-

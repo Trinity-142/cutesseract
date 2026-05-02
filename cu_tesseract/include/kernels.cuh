@@ -24,15 +24,18 @@ SMEM per SM - 128kb
 equal SMEM per Warp - 32kb
 
 */
-template <typename T, size_t N, size_t BS>
+template <typename T>
 static __global__ void _gemm_nnn_block_simple(
     T *A, // row-wise
     T *B, // row-wise
-    T *C // row-wise
+    T *C, // row-wise
+    size_t N,
+    size_t BS
 );
 
-template <typename T, size_t N, size_t BS>
-__host__ void _gemm_nn_block_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
+template <typename T>
+__host__ void _gemm_nn_block_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C, size_t BS = 16) {
+    size_t N = A.shape().first;
     assert(A.shape().first == N && A.shape().second == N);
     assert(B.shape().first == N && B.shape().second == N);
     assert(C.shape().first == N && C.shape().second == N);
@@ -50,33 +53,37 @@ __host__ void _gemm_nn_block_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) 
     dim3 block_dim(BS, BS); // x, y
     dim3 grid_dim(N / BS, N / BS);
 
-    cudaFuncSetCacheConfig(_gemm_nnn_block_simple<T, N, BS>, cudaFuncCachePreferShared);
-    _gemm_nnn_block_simple<T, N, BS><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+    size_t shared_mem_size = 2 * BS * BS * sizeof(T);
+    cudaFuncSetCacheConfig(_gemm_nnn_block_simple<T>, cudaFuncCachePreferShared);
+    _gemm_nnn_block_simple<T><<<grid_dim, block_dim, shared_mem_size>>>(A.item(), B.item(), C.item(), N, BS);
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-template <typename T, size_t N, size_t BS>
+template <typename T>
 static __global__ void _gemm_nnn_block_simple(
     T *A, // row-wise
     T *B, // row-wise
-    T *C // row-wise
+    T *C, // row-wise
+    size_t N,
+    size_t BS
 ) {
     size_t row = blockIdx.y * BS + threadIdx.y;
     size_t col = blockIdx.x * BS + threadIdx.x;
 
     T sum = 0.0;
 
-    __shared__ T block_a[BS][BS];
-    __shared__ T block_b[BS][BS];
+    extern __shared__ char smem[];
+    T* block_a = (T*)smem;
+    T* block_b = (T*)(smem + BS * BS * sizeof(T));
 
     for (size_t s = 0; s < (N / BS); s++) {
-        block_a[threadIdx.y][threadIdx.x] = A[row * N + (s * BS + threadIdx.x)];
-        block_b[threadIdx.y][threadIdx.x] = B[(s * BS + threadIdx.y) * N + col];
+        block_a[threadIdx.y * BS + threadIdx.x] = A[row * N + (s * BS + threadIdx.x)];
+        block_b[threadIdx.y * BS + threadIdx.x] = B[(s * BS + threadIdx.y) * N + col];
 
         __syncthreads();
 
         for (size_t k = 0; k < BS; k++)
-            sum += block_a[threadIdx.y][k] * block_b[k][threadIdx.x];
+            sum += block_a[threadIdx.y * BS + k] * block_b[k * BS + threadIdx.x];
 
         __syncthreads();
     }
@@ -86,17 +93,23 @@ static __global__ void _gemm_nnn_block_simple(
     }
 }
 
-template <typename T, size_t N, size_t K, size_t M> // n*k x k*m = n*m
+template <typename T> // n*k x k*m = n*m
 static __global__ void _gemm_nkm_simple(
     T *A, // row-wise
     T *B, // row-wise
-    T *C // row-wise
+    T *C, // row-wise
+    size_t N,
+    size_t K,
+    size_t M
 );
 
-template <typename T, size_t N, size_t K, size_t M> // n*k x k*m = n*m
+template <typename T> // n*k x k*m = n*m
 __host__ void _gemm_nkm_simple_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
-    assert(A.shape().first == N && A.shape().second == K);
-    assert(B.shape().first == K && B.shape().second == M);
+    size_t N = A.shape().first;
+    size_t K = A.shape().second;
+    size_t M = B.shape().second;
+
+    assert(B.shape().first == K);
     assert(C.shape().first == N && C.shape().second == M);
 
     assert(A.get_layout() == ROW_WISE);
@@ -110,16 +123,19 @@ __host__ void _gemm_nkm_simple_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C
     dim3 block_dim(16, 16);
     dim3 grid_dim((M + block_dim.x - 1) / block_dim.x, (N + block_dim.y - 1) / block_dim.y);
 
-    cudaFuncSetCacheConfig(_gemm_nkm_simple<T, N, K, M>, cudaFuncCachePreferL1);
-    _gemm_nkm_simple<T, N, K, M><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+    cudaFuncSetCacheConfig(_gemm_nkm_simple<T>, cudaFuncCachePreferL1);
+    _gemm_nkm_simple<T><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-template <typename T, size_t N, size_t K, size_t M>
+template <typename T>
 static __global__ void _gemm_nkm_simple(
     T *A, // row-wise
     T *B, // row-wise
-    T *C // row-wise
+    T *C, // row-wise
+    size_t N,
+    size_t K,
+    size_t M
 ) {
     size_t row = blockIdx.y * blockDim.y + threadIdx.y;
     size_t col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -132,4 +148,3 @@ static __global__ void _gemm_nkm_simple(
         C[row * M + col] = sum;
     }
 }
-
