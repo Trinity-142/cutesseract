@@ -1,7 +1,5 @@
-
-#define private public
-
 #include "matrix.cuh"
+#include <cassert>
 
 __host__ void test_layout() {
     size_t rows = 5;
@@ -9,11 +7,9 @@ __host__ void test_layout() {
 
     auto matrix = Matrix<fp32>(rows, cols, ROW_WISE, CPU);
 
-    assert(matrix.cpu_ptr != nullptr);
+    assert(matrix.item() != nullptr);
 }
 
 __host__ void test_layout_switch() {
     return;
 }
-
-#undef public
