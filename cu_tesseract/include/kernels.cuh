@@ -255,17 +255,22 @@ __host__ void _gemm_nkm_simple_launcher_no_tempalte(
     assert(B.shape().first == K && B.shape().second == M);
     assert(C.shape().first == N && C.shape().second == M);
 
-    assert(A.get_layout() == ROW_WISE);
-    assert(B.get_layout() == ROW_WISE);
-    assert(C.get_layout() == ROW_WISE);
+    assert(A.shape().first == N && A.shape().second == N);
+    assert(B.shape().first == N && B.shape().second == N);
+    assert(C.shape().first == N && C.shape().second == N);
+
+    assert((N % BS) == 0);
+
+    assert(A.get_layout() == DataLayout::ROW_WISE);
+    assert(B.get_layout() == DataLayout::ROW_WISE);
+    assert(C.get_layout() == DataLayout::ROW_WISE);
 
     A.cuda();
     B.cuda();
     C.cuda();
 
-    dim3 block_dim(16, 16);
-    dim3 grid_dim((M + block_dim.x - 1) / block_dim.x,
-                  (N + block_dim.y - 1) / block_dim.y);
+    dim3 block_dim(BS, BS); // x, y
+    dim3 grid_dim(N / BS, N / BS);
 
     cudaFuncSetCacheConfig(_gemm_nkm_simple<N, K, M>, cudaFuncCachePreferL1);
     _gemm_nkm_simple<N, K, M><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());

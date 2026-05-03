@@ -4,3 +4,4 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y cmake g++ make ninja-build
 RUN mkdir -p '/root/.config/NVIDIA Corporation' && touch '/root/.config/NVIDIA Corporation/nsys-config.ini'
 RUN echo 'HandleInvalidEvents=true\nCuptiUseRawGpuTimestamps=false\n' > '/root/.config/NVIDIA Corporation/nsys-config.ini'
+RUN export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/python3.12/dist-packages/torch/lib

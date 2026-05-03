@@ -1,4 +1,3 @@
-#include "matrix.cuh"
 
 struct MatView {
   fp32 *ptr;

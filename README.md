@@ -2,23 +2,9 @@
 
 ### usage
 
-```Dockerfile
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y \
-    cmake \
-    g++ \
-    make \
-    gdb \
-    git \
-    ninja-build \
-    && rm -rf /var/lib/apt/lists/*
-```
-
 ```shell
-docker build -t cutesseract-env .
-docker run --rm -it --gpus all -v $(pwd):/workspace -w /workspace cutesseract-env /bin/bash
+docker build -t cutesseract-env build/
+docker run --rm -it --gpus all --cap-add=SYS_ADMIN --network host --ipc host -v $(pwd):/workspace -w /workspace cutesseract-env /bin/bash
 mkdir build && cd build
 cmake -G Ninja ..
 ninja
@@ -33,4 +19,26 @@ Elementwise GPU multiplication duration: ~68.03ms
 TFLOPS: 0.85
 Warp Matrix Multiply-Accumulate GPU multiplication duration: ~4.11489ms
 TFLOPS: 14.09
+```
+
+```python
+import torch
+from py_cutesseract import matmul_fp32, matmul_square_fp32
+
+def main():
+    a = torch.rand((4, 4), device='cuda:0')
+    b = torch.rand((4, 4), device='cuda:0')
+
+    print(matmul_square_fp32(a, b))
+    print(a @ b)
+
+    a = torch.rand((12, 42), device='cuda:0')
+    b = torch.rand((42, 4), device='cuda:0')
+
+    print(matmul_fp32(a, b))
+    print(a @ b)
+
+if __name__ == '__main__':
+    main()
+
 ```
