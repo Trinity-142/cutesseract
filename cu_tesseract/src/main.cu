@@ -11,6 +11,7 @@ using std::endl;
 using std::vector;
 
 constexpr size_t n = 3072, k = 3072, m = 3072;
+//constexpr size_t n = 1024, k = 1024, m = 1024;
 // constexpr size_t N = 256;
 
 
@@ -93,26 +94,26 @@ test_strassen(Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
 
 signed main() {
 
-  size_t num_tries = 16;
+    size_t num_tries = 16;
 
-  vector<Matrix<fp32> *> input_matrices_a;
-  vector<Matrix<fp32> *> input_matrices_b;
-  vector<Matrix<fp32> *> input_matrices_c;
+    vector<Matrix<fp32>*> input_matrices_a;
+    vector<Matrix<fp32>*> input_matrices_b;
+    vector<Matrix<fp32>*> input_matrices_c;
 
-  Matrix<fp32> *A, *B, *C;
+    Matrix<fp32> *A, *B, *C;
 
-  for (size_t i = 0; i < num_tries + 1; i++) {
-    A = new Matrix<fp32>((size_t)n, (size_t)k, ROW_WISE, CUDA);
-    B = new Matrix<fp32>((size_t)k, (size_t)m, ROW_WISE, CUDA);
-    C = new Matrix<fp32>((size_t)n, (size_t)m, ROW_WISE, CUDA);
+    for (size_t i = 0; i < num_tries + 1; i++) {
+        A = new Matrix<fp32>((size_t)n, (size_t)k, ROW_WISE, CUDA);
+        B = new Matrix<fp32>((size_t)k, (size_t)m, ROW_WISE, CUDA);
+        C = new Matrix<fp32>((size_t)n, (size_t)m, ROW_WISE, CUDA);
 
-    A->fill_random((unsigned long long)(i + 993));
-    B->fill_random((unsigned long long)(i + 993));
+        A->fill_random((unsigned long long)(i + 993));
+        B->fill_random((unsigned long long)(i + 993));
 
-    input_matrices_a.push_back(A);
-    input_matrices_b.push_back(B);
-    input_matrices_c.push_back(C);
-  }
+        input_matrices_a.push_back(A);
+        input_matrices_b.push_back(B);
+        input_matrices_c.push_back(C);
+    }
 
     std::chrono::duration<double, std::milli> avg_block = std::chrono::duration<double, std::milli>::zero();
     std::chrono::duration<double, std::milli> avg_element = std::chrono::duration<double, std::milli>::zero();
