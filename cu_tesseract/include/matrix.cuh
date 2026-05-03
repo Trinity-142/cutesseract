@@ -54,47 +54,48 @@ public:
 
     __host__ ~Matrix() {
         if (device == CUDA) {
-            CUDA_CHECK(cudaFree(device_ptr));
+            if (device_ptr) CUDA_CHECK(cudaFree(device_ptr));
         } else {
-            delete[] cpu_ptr;
+            if (cpu_ptr) delete[] cpu_ptr;
         }
     }
 
-    __host__ Matrix(const Matrix& other): cpu_ptr(nullptr), device_ptr(nullptr), rows(other.rows), cols(other.cols), num_elements(other.num_elements), layout(other.layout), device(other.device) {
+    __host__ Matrix(const Matrix& other): rows(other.rows), cols(other.cols), num_elements(other.num_elements), layout(other.layout), device(other.device), cpu_ptr(nullptr), device_ptr(nullptr) {
         if (device == CPU) {
             cpu_ptr = new T[rows * cols];
             memcpy(cpu_ptr, other.cpu_ptr, num_elements);
         } else {
             CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
-            cudaMemcpy(device_ptr, other.device_ptr, num_elements, cudaMemcpyDeviceToDevice);
+            CUDA_CHECK(cudaMemcpy(device_ptr, other.device_ptr, num_elements, cudaMemcpyDeviceToDevice));
         }
     }
 
     __host__ Matrix& operator=(const Matrix& other) {
+        if (this == &other) return *this;
+
+        if (device == CPU) {
+            if (cpu_ptr) delete[] cpu_ptr;
+        } else {
+            if (device_ptr) CUDA_CHECK(cudaFree(device_ptr));
+        }
+
         rows = other.rows;
         cols = other.cols;
         num_elements = other.num_elements;
         layout = other.layout;
-
-
-        if (device == CPU) {
-            delete[] cpu_ptr;
-            cpu_ptr = nullptr;
-        }
-        else {
-            CUDA_CHECK(cudaFree(device_ptr));
-            device_ptr = nullptr;
-        }
-
         device = other.device;
 
         if (device == CPU) {
             cpu_ptr = new T[rows * cols];
             memcpy(cpu_ptr, other.cpu_ptr, num_elements);
+            device_ptr = nullptr;
         } else {
             CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
-            cudaMemcpy(device_ptr, other.device_ptr, num_elements, cudaMemcpyDeviceToDevice);
+            CUDA_CHECK(cudaMemcpy(device_ptr, other.device_ptr, num_elements, cudaMemcpyDeviceToDevice));
+            cpu_ptr = nullptr;
         }
+
+        return *this;
     }
 
     __host__ Matrix(Matrix&& other): cpu_ptr(nullptr), device_ptr(nullptr), rows(0), cols(0), num_elements(0), layout(ROW_WISE), device(CPU) {
@@ -102,6 +103,7 @@ public:
     }
 
     __host__ Matrix& operator=(Matrix&& other) {
+        if (this == &other) return *this;
         this->swap(other);
         return *this;
     }
@@ -207,7 +209,9 @@ public:
             //     curandGenerateUniformDouble(gen, device_ptr, rows * cols);
             curandDestroyGenerator(gen);
         } else {
-            throw std::runtime_error("Random init not implemented for cpu");
+            std::mt19937 gen(seed);
+            std::uniform_real_distribution<T> dis(0.0, 1.0);
+            for (size_t i = 0; i < rows * cols; i++) cpu_ptr[i] = dis(gen);
         }
     }
 
@@ -269,26 +273,25 @@ public:
     __host__ void to_layout(DataLayout new_layout) {
         if (layout == new_layout) return;
 
-        T* new_buffer = new T[rows * cols];
-
         if (device == CUDA) {
-            delete[] new_buffer;
             throw std::runtime_error(".to_layout not implemented for CUDA. consider using .cpu()");
-        } else {
-            for (size_t i = 0; i < rows; i++) {
-                for (size_t j = 0; j < cols; j++) {
-                    if (new_layout == ROW_WISE) {
-                        new_buffer[i + j * cols] = cpu_ptr[i * rows + j];
-                    } else {
-                        new_buffer[i * rows + j] = cpu_ptr[i + j * cols];
-                    }
+        }
+
+        T* new_buffer = new T[rows * cols];
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = 0; j < cols; j++) {
+                if (new_layout == ROW_WISE) {
+                    // Current is COL_WISE: i + j * rows
+                    new_buffer[i * cols + j] = cpu_ptr[i + j * rows];
+                } else {
+                    // Current is ROW_WISE: i * cols + j
+                    new_buffer[i + j * rows] = cpu_ptr[i * cols + j];
                 }
             }
         }
 
         delete[] cpu_ptr;
         cpu_ptr = new_buffer;
-
         layout = new_layout;
     }
 
