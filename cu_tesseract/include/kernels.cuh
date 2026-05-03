@@ -182,8 +182,8 @@ static __global__ void _gemm_nkm_wmma_simple(
 
         size_t row_B = threadId / 8;
         size_t col_B = (threadId % 8) * 4;
-        uint2 val_B = *(reinterpret_cast<uint2*>(&B[(i + row_B) * M + (globalBlockCol + col_B)]));
-        *(reinterpret_cast<uint2*>(&block_B[row_B][col_B])) = val_B;
+        fp64 val_B = *(reinterpret_cast<fp64*>(&B[(i + row_B) * M + (globalBlockCol + col_B)]));
+        *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = val_B;
         __syncthreads();
 
         half* warp_A = &block_A[warpRow * tileSize][0];
