@@ -220,6 +220,58 @@ static __global__ void _gemm_nkm_wmma_simple(
     }
 }
 
+
+static __global__ void _gemm_nkm_simple_no_template(
+    fp32 *A, // row-wise
+    fp32 *B, // row-wise
+    fp32 *C, // row-wise
+    size_t N,
+    size_t K,
+    size_t M,
+) {
+    size_t col = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (row < N && col < M) {
+        fp32 sum = 0;
+        for (size_t k = 0; k < K; ++k) {
+            sum += A[row * K + k] * B[k*M + col];
+        }
+        C[row * M + col] = sum;
+    }
+}
+
+__host__ void _gemm_nkm_simple_launcher_no_tempalte(
+    Matrix<fp32> &A,
+    Matrix<fp32> &B,
+    Matrix<fp32> &C,
+) {
+    size_t N = A.shape().first;
+    size_t K = B.shape().first;
+    size_t M = B.shape().second;
+
+
+    assert(A.shape().first == N && A.shape().second == K);
+    assert(B.shape().first == K && B.shape().second == M);
+    assert(C.shape().first == N && C.shape().second == M);
+
+    assert(A.get_layout() == ROW_WISE);
+    assert(B.get_layout() == ROW_WISE);
+    assert(C.get_layout() == ROW_WISE);
+
+    A.cuda();
+    B.cuda();
+    C.cuda();
+
+    dim3 block_dim(16, 16);
+    dim3 grid_dim((M + block_dim.x - 1) / block_dim.x,
+                  (N + block_dim.y - 1) / block_dim.y);
+
+    cudaFuncSetCacheConfig(_gemm_nkm_simple<N, K, M>, cudaFuncCachePreferL1);
+    _gemm_nkm_simple<N, K, M><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
 __host__ void _gemm_nkm_wmma_launcher(Matrix<fp16> &A, Matrix<fp16> &B, Matrix<fp32> &C) {
     size_t N = A.shape().first;
     size_t K = A.shape().second;
