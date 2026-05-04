@@ -140,33 +140,27 @@ __host__ void _strassen_rec(const T* A, size_t lda,
         add_square_kernel<T><<<grid_dim, block_dim>>>(A11, lda, A22, lda, S1.item(), H, H);
         add_square_kernel<T><<<grid_dim, block_dim>>>(B11, ldb, B22, ldb, S2.item(), H, H);
         _strassen_rec<T>(S1.item(), H, S2.item(), H, P1.item(), H, H);
-        CUDA_CHECK(cudaDeviceSynchronize());
 
         // M2 = (A21 + A22) * B11
         add_square_kernel<T><<<grid_dim, block_dim>>>(A21, lda, A22, lda, S1.item(), H, H);
         _strassen_rec<T>(S1.item(), H, B11, ldb, P2.item(), H, H);
-        CUDA_CHECK(cudaDeviceSynchronize());
 
         // M3 = A11 * (B12 - B22)
         sub_square_kernel<T><<<grid_dim, block_dim>>>(B12, ldb, B22, ldb, S2.item(), H, H);
         _strassen_rec<T>(A11, lda, S2.item(), H, P3.item(), H, H);
-        CUDA_CHECK(cudaDeviceSynchronize());
 
         // M4 = A22 * (B21 - B11)
         sub_square_kernel<T><<<grid_dim, block_dim>>>(B21, ldb, B11, ldb, S2.item(), H, H);
         _strassen_rec<T>(A22, lda, S2.item(), H, P4.item(), H, H);
-        CUDA_CHECK(cudaDeviceSynchronize());
 
         // M5 = (A11 + A12) * B22
         add_square_kernel<T><<<grid_dim, block_dim>>>(A11, lda, A12, lda, S1.item(), H, H);
         _strassen_rec<T>(S1.item(), H, B22, ldb, P5.item(), H, H);
-        CUDA_CHECK(cudaDeviceSynchronize());
 
         // M6 = (A21 - A11) * (B11 + B12)
         sub_square_kernel<T><<<grid_dim, block_dim>>>(A21, lda, A11, lda, S1.item(), H, H);
         add_square_kernel<T><<<grid_dim, block_dim>>>(B11, ldb, B12, ldb, S2.item(), H, H);
         _strassen_rec<T>(S1.item(), H, S2.item(), H, P6.item(), H, H);
-        CUDA_CHECK(cudaDeviceSynchronize());
 
         // M7 = (A12 - A22) * (B21 + B22)
         sub_square_kernel<T><<<grid_dim, block_dim>>>(A12, lda, A22, lda, S1.item(), H, H);
