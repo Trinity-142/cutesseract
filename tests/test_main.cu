@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <map>
 #include <functional>
+#include <chrono>
 
 #include "matrix.cuh"
 #include "kernels.cuh"
@@ -137,6 +138,32 @@ void run_test(KernelFunc kernel, size_t N, size_t K, size_t M, FillType fill, in
     }
 }
 
+void run_benchmark(map<string, KernelFunc>& registry, size_t size = 1024, int trials = 10) {
+    cout << "\n--- Benchmarking Kernels (Size: " << size << "x" << size << ", Trials: " << trials << ") ---" << endl;
+    
+    for (auto const& [name, kernel] : registry) {
+        Matrix<fp32> A(size, size, ROW_WISE, CUDA);
+        Matrix<fp32> B(size, size, ROW_WISE, CUDA);
+        Matrix<fp32> C(size, size, ROW_WISE, CUDA);
+        A.fill_random();
+        B.fill_random();
+
+        // Warmup
+        kernel(A, B, C);
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < trials; i++) {
+            kernel(A, B, C);
+        }
+        CUDA_CHECK(cudaDeviceSynchronize());
+        auto end = std::chrono::high_resolution_clock::now();
+        
+        std::chrono::duration<double, std::milli> duration = (end - start) / trials;
+        cout << std::left << std::setw(12) << name << ": " << std::fixed << std::setprecision(3) << duration.count() << " ms" << endl;
+    }
+}
+
 void iterative_stress_test(KernelFunc kernel) {
     for (size_t size = 16; size <= 1024; size *= 2) {
         cout << "\n--- Size: " << size << "x" << size << " ---" << endl;
@@ -152,8 +179,8 @@ void menu() {
 
     while (true) {
         cout << "\n=== CuTesseract Test CLI ===" << endl;
-        cout << "1. Run Class Matrix Tests" << endl;
-        cout << "2. Standard Kernel Run (512x512)" << endl;
+        cout << "1. Run Performance Benchmark (1024x1024)" << endl;
+        cout << "2. Standard Kernel Verification (512x512)" << endl;
         cout << "3. Iterative Stress Test (16->1024)" << endl;
         cout << "4. Exit" << endl;
         cout << "Choice: ";
@@ -162,8 +189,7 @@ void menu() {
         if (!(cin >> choice)) break;
 
         if (choice == 1) {
-            test_layout();
-            test_layout_switch();
+            run_benchmark(kernel_registry);
         } else if (choice == 2 || choice == 3) {
             cout << "\nSelect Kernel:" << endl;
             int idx = 1;
