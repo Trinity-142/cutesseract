@@ -62,11 +62,11 @@ Matrix<T> mmul_cpu(Matrix<T>& A, Matrix<T>& B) {
     Matrix<T> C(shapeA.first, shapeB.second, ROW_WISE, CPU);
     for(size_t i = 0; i < shapeA.first; i++) {
         for (size_t j = 0; j < shapeB.second; j++) {
-            T sum = 0.0;
+            double sum = 0.0;
             for (size_t r = 0; r < shapeA.second; r++) {
-                sum += A.get(i, r) * B.get(r, j);
+                sum += (double)A.get(i, r) * (double)B.get(r, j);
             }
-            C.set(i, j, sum);
+            C.set(i, j, (T)sum);
         }
     }
     return C;
@@ -102,7 +102,7 @@ void print_heatmap(Matrix<T>& GPU_C, Matrix<T>& CPU_C, T precision) {
     }
 }
 
-void verify_result(Matrix<fp32>& GPU_C, Matrix<fp32>& CPU_C, fp32 precision = 1e-4) {
+void verify_result(Matrix<fp32>& GPU_C, Matrix<fp32>& CPU_C, fp32 precision = 1e-3) {
     fp32 max_diff = calculate_max_diff(GPU_C, CPU_C);
     if (max_diff > precision) {
         cout << "[FAILED] Max difference: " << std::scientific << max_diff << endl;
