@@ -31,7 +31,6 @@ size_t get_strassen_workspace_size(size_t N, int depth = 0) {
     }
 }
 
-// Helper to calculate how many streams we need to pre-allocate
 inline size_t count_total_strassen_streams(int levels) {
     size_t total = 0;
     size_t current_level_width = 1;
@@ -42,7 +41,7 @@ inline size_t count_total_strassen_streams(int levels) {
     return total;
 }
 
-template <typename T>//                                   leading destination
+template <typename T>
 __global__ void copy_rect_kernel(const T* src, size_t src_ld, T* dst, size_t dst_ld, size_t rows, size_t cols) {
     size_t col = blockIdx.x * blockDim.x + threadIdx.x;
     size_t row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -168,17 +167,17 @@ __host__ void _strassen_rec(const T* A, size_t lda,
         _strassen_rec<T>(S1_P2, H, B11, ldb, P2, H, H, next_ws + 1 * child_ws_size, depth + 1, stream_pool, stream_offset, s[1]);
 
         sub_square_kernel<T><<<grid_dim, block_dim, 0, s[2]>>>(B12, ldb, B22, ldb, S2_P3, H, H);
-        _strassen_rec<T>(A11, lda, S2_P3, H, P3, H, H, next_ws + 2 * child_ws_size, depth + 1, s[2]);
+        _strassen_rec<T>(A11, lda, S2_P3, H, P3, H, H, next_ws + 2 * child_ws_size, depth + 1, stream_pool, stream_offset, s[2]);
 
         sub_square_kernel<T><<<grid_dim, block_dim, 0, s[3]>>>(B21, ldb, B11, ldb, S2_P4, H, H);
-        _strassen_rec<T>(A22, lda, S2_P4, H, P4, H, H, next_ws + 3 * child_ws_size, depth + 1, s[3]);
+        _strassen_rec<T>(A22, lda, S2_P4, H, P4, H, H, next_ws + 3 * child_ws_size, depth + 1, stream_pool, stream_offset, s[3]);
 
         add_square_kernel<T><<<grid_dim, block_dim, 0, s[4]>>>(A11, lda, A12, lda, S1_P5, H, H);
-        _strassen_rec<T>(S1_P5, H, B22, ldb, P5, H, H, next_ws + 4 * child_ws_size, depth + 1, s[4]);
+        _strassen_rec<T>(S1_P5, H, B22, ldb, P5, H, H, next_ws + 4 * child_ws_size, depth + 1, stream_pool, stream_offset, s[4]);
 
         sub_square_kernel<T><<<grid_dim, block_dim, 0, s[5]>>>(A21, lda, A11, lda, S1_P6, H, H);
         add_square_kernel<T><<<grid_dim, block_dim, 0, s[5]>>>(B11, ldb, B12, ldb, S2_P6, H, H);
-        _strassen_rec<T>(S1_P6, H, S2_P6, H, P6, H, H, next_ws + 5 * child_ws_size, depth + 1, s[5]);
+        _strassen_rec<T>(S1_P6, H, S2_P6, H, P6, H, H, next_ws + 5 * child_ws_size, depth + 1, stream_pool, stream_offset, s[5]);
 
         sub_square_kernel<T><<<grid_dim, block_dim, 0, s[6]>>>(A12, lda, A22, lda, S1_P7, H, H);
         add_square_kernel<T><<<grid_dim, block_dim, 0, s[6]>>>(B21, ldb, B22, ldb, S2_P7, H, H);
@@ -239,11 +238,14 @@ __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
     T* d_memory = nullptr;
     CUDA_CHECK(cudaMalloc(&d_memory, (pad_size + ws_size) * sizeof(T)));
     CUDA_CHECK(cudaMemset(d_memory, 0, (pad_size + ws_size) * sizeof(T)));
+
     T *Ap = d_memory, *Bp = d_memory + S * S, *Cp = d_memory + 2 * S * S;
     T *workspace = d_memory + 3 * S * S;
+
     size_t num_streams = count_total_strassen_streams(STRASSEN_PARALLEL_LEVELS);
     cudaStream_t* stream_pool = new cudaStream_t[num_streams];
     for (size_t i = 0; i < num_streams; i++) CUDA_CHECK(cudaStreamCreate(&stream_pool[i]));
+
     dim3 block(16, 16);
     copy_rect_kernel<<<dim3((K+15)/16, (N+15)/16), block>>>(A.item(), K, Ap, S, N, K);
     copy_rect_kernel<<<dim3((M+15)/16, (K+15)/16), block>>>(B.item(), M, Bp, S, K, M);
