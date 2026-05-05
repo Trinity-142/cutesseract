@@ -8,29 +8,8 @@
 #include "kernels.cuh"
 
 
-template <typename T>
-__host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C);
- 
 #define CUTOFF_SIZE 256
-template <typename T>
-__host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
-    size_t N = A.shape().first;
-    size_t K = A.shape().second;
-    size_t M = B.shape().second;
 
-    assert(B.shape().first == K);
-    assert(C.shape().first == N && C.shape().second == M);
-
-    assert(A.get_layout() == ROW_WISE);
-    assert(B.get_layout() == ROW_WISE);
-    assert(C.get_layout() == ROW_WISE);
-
-    A.cuda();
-    B.cuda();
-    C.cuda();
-
-    _gemm_strassen<T>(A, B, C);
-}
 
 template <typename T>//                                   leading destination
 __global__ void copy_rect_kernel(const T* src, size_t src_ld, T* dst, size_t dst_ld, size_t rows, size_t cols) {
@@ -199,9 +178,23 @@ __host__ void _strassen_rec(const T* A, size_t lda, const T* B, size_t ldb, T* C
 }
 
 
-
 template <typename T>
-__host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
+__host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
+    size_t N = A.shape().first;
+    size_t K = A.shape().second;
+    size_t M = B.shape().second;
+
+    assert(B.shape().first == K);
+    assert(C.shape().first == N && C.shape().second == M);
+
+    assert(A.get_layout() == ROW_WISE);
+    assert(B.get_layout() == ROW_WISE);
+    assert(C.get_layout() == ROW_WISE);
+
+    A.cuda();
+    B.cuda();
+    C.cuda();
+
     size_t N = A.shape().first;
     size_t K = A.shape().second;
     size_t M = B.shape().second;
