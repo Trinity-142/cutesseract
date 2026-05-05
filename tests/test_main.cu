@@ -138,7 +138,7 @@ void run_test(KernelFunc kernel, size_t N, size_t K, size_t M, FillType fill, in
     }
 }
 
-void run_benchmark(map<string, KernelFunc>& registry, size_t size = 1024, int trials = 10) {
+void run_benchmark(map<string, KernelFunc>& registry, size_t size = 16384, int trials = 10) {
     cout << "\n--- Benchmarking Kernels (Size: " << size << "x" << size << ", Trials: " << trials << ") ---" << endl;
     
     for (auto const& [name, kernel] : registry) {
