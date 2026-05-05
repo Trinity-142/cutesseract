@@ -8,8 +8,38 @@
 #include "kernels.cuh"
 
 
+template <typename T>
+__host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C);
+ 
 #define CUTOFF_SIZE 256
 
+template <typename T>
+size_t get_strassen_workspace_size(size_t N) {
+    if (N <= CUTOFF_SIZE) return 0;
+    size_t H = N / 2;
+    // 19 matrices of size HxH at this level, plus space for 7 recursive calls
+    return 19 * H * H + 7 * get_strassen_workspace_size<T>(H);
+}
+
+template <typename T>
+__host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
+    size_t N = A.shape().first;
+    size_t K = A.shape().second;
+    size_t M = B.shape().second;
+
+    assert(B.shape().first == K);
+    assert(C.shape().first == N && C.shape().second == M);
+
+    assert(A.get_layout() == ROW_WISE);
+    assert(B.get_layout() == ROW_WISE);
+    assert(C.get_layout() == ROW_WISE);
+
+    A.cuda();
+    B.cuda();
+    C.cuda();
+
+    _gemm_strassen<T>(A, B, C);
+}
 
 template <typename T>//                                   leading destination
 __global__ void copy_rect_kernel(const T* src, size_t src_ld, T* dst, size_t dst_ld, size_t rows, size_t cols) {
@@ -66,7 +96,11 @@ __global__ void gemm_base_square_kernel(const T* A, size_t lda, const T* B, size
 
 
 template <typename T>
-__host__ void _strassen_rec(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc, size_t N,
+__host__ void _strassen_rec(const T* A, size_t lda,
+                            const T* B, size_t ldb,
+                            T* C, size_t ldc,
+                            size_t N,
+                            T* workspace,
                             cudaStream_t stream = 0) {
     if (N <= CUTOFF_SIZE) {
         dim3 block_dim(16, 16);
@@ -77,6 +111,7 @@ __host__ void _strassen_rec(const T* A, size_t lda, const T* B, size_t ldb, T* C
         return;
     } else {
         size_t H = N / 2;
+        size_t H2 = H * H;
 
         const T* A11 = A;
         const T* A12 = A + H;
@@ -93,133 +128,117 @@ __host__ void _strassen_rec(const T* A, size_t lda, const T* B, size_t ldb, T* C
         T* C21 = C + H * ldc;
         T* C22 = C + H * ldc + H;
 
+        // Partition workspace for this level
+        // 10 scratch inputs + 7 products + 2 final scratch = 19
+        T* S1_P1 = workspace;
+        T* S2_P1 = workspace + H2;
+        T* S1_P2 = workspace + 2 * H2;
+        T* S2_P3 = workspace + 3 * H2;
+        T* S2_P4 = workspace + 4 * H2;
+        T* S1_P5 = workspace + 5 * H2;
+        T* S1_P6 = workspace + 6 * H2;
+        T* S2_P6 = workspace + 7 * H2;
+        T* S1_P7 = workspace + 8 * H2;
+        T* S2_P7 = workspace + 9 * H2;
+
+        T* P1 = workspace + 10 * H2;
+        T* P2 = workspace + 11 * H2;
+        T* P3 = workspace + 12 * H2;
+        T* P4 = workspace + 13 * H2;
+        T* P5 = workspace + 14 * H2;
+        T* P6 = workspace + 15 * H2;
+        T* P7 = workspace + 16 * H2;
+
+        T* T1 = workspace + 17 * H2;
+        T* T2 = workspace + 18 * H2;
+
+        T* next_ws = workspace + 19 * H2;
+        size_t child_ws_size = get_strassen_workspace_size<T>(H);
+
         cudaStream_t s[7];
         for (int i = 0; i < 7; i++) {
             CUDA_CHECK(cudaStreamCreate(&s[i]));
         }
 
-        Matrix<T> S1_P1(H, H, ROW_WISE, CUDA), S2_P1(H, H, ROW_WISE, CUDA);
-        Matrix<T> S1_P2(H, H, ROW_WISE, CUDA);
-        Matrix<T> S2_P3(H, H, ROW_WISE, CUDA);
-        Matrix<T> S2_P4(H, H, ROW_WISE, CUDA);
-        Matrix<T> S1_P5(H, H, ROW_WISE, CUDA);
-        Matrix<T> S1_P6(H, H, ROW_WISE, CUDA), S2_P6(H, H, ROW_WISE, CUDA);
-        Matrix<T> S1_P7(H, H, ROW_WISE, CUDA), S2_P7(H, H, ROW_WISE, CUDA);
-
-        Matrix<T> P1(H, H, ROW_WISE, CUDA);
-        Matrix<T> P2(H, H, ROW_WISE, CUDA);
-        Matrix<T> P3(H, H, ROW_WISE, CUDA);
-        Matrix<T> P4(H, H, ROW_WISE, CUDA);
-        Matrix<T> P5(H, H, ROW_WISE, CUDA);
-        Matrix<T> P6(H, H, ROW_WISE, CUDA);
-        Matrix<T> P7(H, H, ROW_WISE, CUDA);
-
         dim3 block_dim(16, 16);
         dim3 grid_dim((H + block_dim.x - 1) / block_dim.x,
                       (H + block_dim.y - 1) / block_dim.y);
 
-        // P1 = (A11 + A22) * (B11 + B22)
-        add_square_kernel<T><<<grid_dim, block_dim, 0, s[0]>>>(A11, lda, A22, lda, S1_P1.item(), H, H);
-        add_square_kernel<T><<<grid_dim, block_dim, 0, s[0]>>>(B11, ldb, B22, ldb, S2_P1.item(), H, H);
-        _strassen_rec<T>(S1_P1.item(), H, S2_P1.item(), H, P1.item(), H, H, s[0]);
+        // M1 = (A11 + A22) * (B11 + B22)
+        add_square_kernel<T><<<grid_dim, block_dim, 0, s[0]>>>(A11, lda, A22, lda, S1_P1, H, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, s[0]>>>(B11, ldb, B22, ldb, S2_P1, H, H);
+        _strassen_rec<T>(S1_P1, H, S2_P1, H, P1, H, H, next_ws + 0 * child_ws_size, s[0]);
 
-        // P2 = (A21 + A22) * B11
-        add_square_kernel<T><<<grid_dim, block_dim, 0, s[1]>>>(A21, lda, A22, lda, S1_P2.item(), H, H);
-        _strassen_rec<T>(S1_P2.item(), H, B11, ldb, P2.item(), H, H, s[1]);
+        // M2 = (A21 + A22) * B11
+        add_square_kernel<T><<<grid_dim, block_dim, 0, s[1]>>>(A21, lda, A22, lda, S1_P2, H, H);
+        _strassen_rec<T>(S1_P2, H, B11, ldb, P2, H, H, next_ws + 1 * child_ws_size, s[1]);
 
-        // P3 = A11 * (B12 - B22)
-        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[2]>>>(B12, ldb, B22, ldb, S2_P3.item(), H, H);
-        _strassen_rec<T>(A11, lda, S2_P3.item(), H, P3.item(), H, H, s[2]);
+        // M3 = A11 * (B12 - B22)
+        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[2]>>>(B12, ldb, B22, ldb, S2_P3, H, H);
+        _strassen_rec<T>(A11, lda, S2_P3, H, P3, H, H, next_ws + 2 * child_ws_size, s[2]);
 
-        // P4 = A22 * (B21 - B11)
-        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[3]>>>(B21, ldb, B11, ldb, S2_P4.item(), H, H);
-        _strassen_rec<T>(A22, lda, S2_P4.item(), H, P4.item(), H, H, s[3]);
+        // M4 = A22 * (B21 - B11)
+        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[3]>>>(B21, ldb, B11, ldb, S2_P4, H, H);
+        _strassen_rec<T>(A22, lda, S2_P4, H, P4, H, H, next_ws + 3 * child_ws_size, s[3]);
 
-        // P5 = (A11 + A12) * B22
-        add_square_kernel<T><<<grid_dim, block_dim, 0, s[4]>>>(A11, lda, A12, lda, S1_P5.item(), H, H);
-        _strassen_rec<T>(S1_P5.item(), H, B22, ldb, P5.item(), H, H, s[4]);
+        // M5 = (A11 + A12) * B22
+        add_square_kernel<T><<<grid_dim, block_dim, 0, s[4]>>>(A11, lda, A12, lda, S1_P5, H, H);
+        _strassen_rec<T>(S1_P5, H, B22, ldb, P5, H, H, next_ws + 4 * child_ws_size, s[4]);
 
-        // P6 = (A21 - A11) * (B11 + B12)
-        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[5]>>>(A21, lda, A11, lda, S1_P6.item(), H, H);
-        add_square_kernel<T><<<grid_dim, block_dim, 0, s[5]>>>(B11, ldb, B12, ldb, S2_P6.item(), H, H);
-        _strassen_rec<T>(S1_P6.item(), H, S2_P6.item(), H, P6.item(), H, H, s[5]);
+        // M6 = (A21 - A11) * (B11 + B12)
+        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[5]>>>(A21, lda, A11, lda, S1_P6, H, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, s[5]>>>(B11, ldb, B12, ldb, S2_P6, H, H);
+        _strassen_rec<T>(S1_P6, H, S2_P6, H, P6, H, H, next_ws + 5 * child_ws_size, s[5]);
 
-        // P7 = (A12 - A22) * (B21 + B22)
-        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[6]>>>(A12, lda, A22, lda, S1_P7.item(), H, H);
-        add_square_kernel<T><<<grid_dim, block_dim, 0, s[6]>>>(B21, ldb, B22, ldb, S2_P7.item(), H, H);
-        _strassen_rec<T>(S1_P7.item(), H, S2_P7.item(), H, P7.item(), H, H, s[6]);
+        // M7 = (A12 - A22) * (B21 + B22)
+        sub_square_kernel<T><<<grid_dim, block_dim, 0, s[6]>>>(A12, lda, A22, lda, S1_P7, H, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, s[6]>>>(B21, ldb, B22, ldb, S2_P7, H, H);
+        _strassen_rec<T>(S1_P7, H, S2_P7, H, P7, H, H, next_ws + 6 * child_ws_size, s[6]);
 
         for (int i = 0; i < 7; i++) {
             CUDA_CHECK(cudaStreamSynchronize(s[i]));
             CUDA_CHECK(cudaStreamDestroy(s[i]));
         }
 
-        Matrix<T> T1(H, H, ROW_WISE, CUDA);
-        Matrix<T> T2(H, H, ROW_WISE, CUDA);
+        // Combine using parent stream
+        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P1, H, P4, H, T1, H, H);
+        sub_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T1, H, P5, H, T2, H, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T2, H, P7, H, C11, ldc, H);
 
-        // C11 = P1 + P4 - P5 + P7
-        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P1.item(), H, P4.item(), H, T1.item(), H, H);
-        sub_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T1.item(), H, P5.item(), H, T2.item(), H, H);
-        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T2.item(), H, P7.item(), H, C11, ldc, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P3, H, P5, H, C12, ldc, H);
 
-        // C12 = P3 + P5
-        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P3.item(), H, P5.item(), H, C12, ldc, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P2, H, P4, H, C21, ldc, H);
 
-        // C21 = P2 + P4
-        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P2.item(), H, P4.item(), H, C21, ldc, H);
-
-        // C22 = P1 - P2 + P3 + P6
-        sub_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P1.item(), H, P2.item(), H, T1.item(), H, H);
-        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T1.item(), H, P3.item(), H, T2.item(), H, H);
-        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T2.item(), H, P6.item(), H, C22, ldc, H);
+        sub_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(P1, H, P2, H, T1, H, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T1, H, P3, H, T2, H, H);
+        add_square_kernel<T><<<grid_dim, block_dim, 0, stream>>>(T2, H, P6, H, C22, ldc, H);
 
         return;
     }
 }
 
 
+
 template <typename T>
-__host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
+__host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
     size_t N = A.shape().first;
     size_t K = A.shape().second;
     size_t M = B.shape().second;
 
-    assert(B.shape().first == K);
-    assert(C.shape().first == N && C.shape().second == M);
+    size_t S = next_pow2(max3(N, K, M));
 
-    assert(A.get_layout() == ROW_WISE);
-    assert(B.get_layout() == ROW_WISE);
-    assert(C.get_layout() == ROW_WISE);
-
-    A.cuda();
-    B.cuda();
-    C.cuda();
-
-    size_t N = A.shape().first;
-    size_t K = A.shape().second;
-    size_t M = B.shape().second;
-
-    assert(B.shape().first == K);
-    assert(C.shape().first == N && C.shape().second == M);
-
-    assert(A.get_layout() == ROW_WISE);
-    assert(B.get_layout() == ROW_WISE);
-    assert(C.get_layout() == ROW_WISE);
-
-    A.cuda();
-    B.cuda();
-    C.cuda();
-
-    size_t S = next_pow2(max3(N, K, M)); // typa kvadrat
-
-    // could be optimizable, do not care enough
     if (S <= CUTOFF_SIZE) {
         _gemm_nkm_simple_launcher<T>(A, B, C);
         return;
     }
 
+    T* workspace = nullptr;
+    size_t ws_size = get_strassen_workspace_size<T>(S);
+    CUDA_CHECK(cudaMalloc(&workspace, ws_size * sizeof(T)));
+
     if (N == K && K == M && (N == S)) {
-        _strassen_rec<T>(A.item(), N, B.item(), K, C.item(), M, S);
+        _strassen_rec<T>(A.item(), N, B.item(), K, C.item(), M, S, workspace);
+        CUDA_CHECK(cudaFree(workspace));
         return;
     }
 
@@ -232,21 +251,18 @@ __host__ void _gemm_strassen_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) 
     CUDA_CHECK(cudaMemset(Cp.item(), 0, sizeof(T) * S * S));
 
     dim3 block_dim(16, 16);
-    dim3 gridA((K + block_dim.x - 1) / block_dim.x,
-               (N + block_dim.y - 1) / block_dim.y);
-    dim3 gridB((M + block_dim.x - 1) / block_dim.x,
-               (K + block_dim.y - 1) / block_dim.y);
-    dim3 gridC((M + block_dim.x - 1) / block_dim.x,
-               (N + block_dim.y - 1) / block_dim.y);
+    dim3 gridA((K + block_dim.x - 1) / block_dim.x, (N + block_dim.y - 1) / block_dim.y);
+    dim3 gridB((M + block_dim.x - 1) / block_dim.x, (K + block_dim.y - 1) / block_dim.y);
+    dim3 gridC((M + block_dim.x - 1) / block_dim.x, (N + block_dim.y - 1) / block_dim.y);
 
     copy_rect_kernel<T><<<gridA, block_dim>>>(A.item(), K, Ap.item(), S, N, K);
     copy_rect_kernel<T><<<gridB, block_dim>>>(B.item(), M, Bp.item(), S, K, M);
-
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    _strassen_rec<T>(Ap.item(), S, Bp.item(), S, Cp.item(), S, S);
+    _strassen_rec<T>(Ap.item(), S, Bp.item(), S, Cp.item(), S, S, workspace);
 
-    // Copy back only the valid N x M result.
     copy_rect_kernel<T><<<gridC, block_dim>>>(Cp.item(), S, C.item(), M, N, M);
     CUDA_CHECK(cudaDeviceSynchronize());
+
+    CUDA_CHECK(cudaFree(workspace));
 }
