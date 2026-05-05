@@ -12,7 +12,9 @@
 template <typename T>
 __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C);
 
+#ifndef CUTOFF_SIZE
 #define CUTOFF_SIZE 256
+#endif
 
 #ifndef STRASSEN_PARALLEL_LEVELS
 #define STRASSEN_PARALLEL_LEVELS 1
@@ -41,7 +43,7 @@ inline size_t count_total_strassen_streams(int levels) {
     return total;
 }
 
-template <typename T>
+template <typename T>//                                   leading destination
 __global__ void copy_rect_kernel(const T* src, size_t src_ld, T* dst, size_t dst_ld, size_t rows, size_t cols) {
     size_t col = blockIdx.x * blockDim.x + threadIdx.x;
     size_t row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -80,19 +82,6 @@ __global__ void sub_square_kernel(const T* A, size_t lda, const T* B, size_t ldb
 }
 
 template <typename T>
-__global__ void gemm_base_square_kernel(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc, size_t N) {
-    size_t row = blockIdx.y * blockDim.y + threadIdx.y;
-    size_t col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row < N && col < N) {
-        T sum = 0;
-        for (size_t k = 0; k < N; ++k) {
-            sum += A[row * lda + k] * B[k * ldb + col];
-        }
-        C[row * ldc + col] = sum;
-    }
-}
-
-template <typename T>
 __host__ void _strassen_rec(const T* A, size_t lda,
                             const T* B, size_t ldb,
                             T* C, size_t ldc,
@@ -103,9 +92,14 @@ __host__ void _strassen_rec(const T* A, size_t lda,
                             size_t& stream_offset,
                             cudaStream_t current_stream) {
     if (N <= CUTOFF_SIZE) {
-        dim3 block_dim(16, 16);
-        dim3 grid_dim((N + block_dim.x - 1) / block_dim.x, (N + block_dim.y - 1) / block_dim.y);
-        gemm_base_square_kernel<T><<<grid_dim, block_dim, 0, current_stream>>>(A, lda, B, ldb, C, ldc, N);
+        size_t BS = 16;
+        dim3 block_dim(BS, BS);
+        dim3 grid_dim((N + BS - 1) / BS, (N + BS - 1) / BS);
+        size_t shared_mem_size = 2 * BS * BS * sizeof(T);
+        
+        // Using optimized blocked GEMM definition from kernels.cuh
+        _gemm_nnn_block_simple<T><<<grid_dim, block_dim, shared_mem_size, current_stream>>>(
+            const_cast<T*>(A), const_cast<T*>(B), C, N, BS);
         return;
     }
 
@@ -229,7 +223,7 @@ __host__ void _gemm_strassen(Matrix<T> &A, Matrix<T> &B, Matrix<T> &C) {
     size_t S = next_pow2(max3(N, K, M));
 
     if (S <= CUTOFF_SIZE) {
-        _gemm_nkm_simple_launcher<T>(A, B, C);
+        _gemm_nn_block_launcher<T>(A, B, C);
         return;
     }
 
