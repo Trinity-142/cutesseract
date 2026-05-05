@@ -87,10 +87,7 @@ __global__ void gemm_base_square_kernel(const T* A, size_t lda, const T* B, size
 
 
 template <typename T>
-__host__ void _strassen_rec(const T* A, size_t lda,
-                            const T* B, size_t ldb,
-                            T* C, size_t ldc,
-                            size_t N,
+__host__ void _strassen_rec(const T* A, size_t lda, const T* B, size_t ldb, T* C, size_t ldc, size_t N,
                             cudaStream_t stream = 0) {
     if (N <= CUTOFF_SIZE) {
         dim3 block_dim(16, 16);
