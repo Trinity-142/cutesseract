@@ -16,7 +16,7 @@
 
 enum class DataLayout {
   ROW_WISE,
-  COL_WIZE,
+  COL_WISE,
 };
 
 enum class DataDevice {
