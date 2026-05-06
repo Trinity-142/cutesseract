@@ -147,27 +147,31 @@ void run_benchmark(map<string, KernelFunc> &registry, size_t size = 1024,
   cout << "\n--- Benchmarking Kernels (Size: " << size << "x" << size
        << ", Trials: " << trials << ") ---" << endl;
 
-  for (auto const &[name, kernel] : registry) {
+  map<string, double> accumulated_times;
+
+  for (int t = 0; t < trials; t++) {
     Matrix<fp32> A(size, size, ROW_WISE, CUDA);
     Matrix<fp32> B(size, size, ROW_WISE, CUDA);
-    Matrix<fp32> C(size, size, ROW_WISE, CUDA);
-    A.fill_random();
-    B.fill_random();
-
-    // Warmup
-    kernel(A, B, C);
+    A.fill_random((unsigned long long)t);
+    B.fill_random((unsigned long long)t + 1337);
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < trials; i++) {
+    for (auto const &[name, kernel] : registry) {
+      Matrix<fp32> C(size, size, ROW_WISE, CUDA);
+      auto start = std::chrono::high_resolution_clock::now();
       kernel(A, B, C);
-    }
-    CUDA_CHECK(cudaDeviceSynchronize());
-    auto end = std::chrono::high_resolution_clock::now();
+      CUDA_CHECK(cudaDeviceSynchronize());
+      auto end = std::chrono::high_resolution_clock::now();
 
-    std::chrono::duration<double, std::milli> duration = (end - start) / trials;
+      std::chrono::duration<double, std::milli> duration = end - start;
+      accumulated_times[name] += duration.count();
+    }
+  }
+
+  for (auto const &[name, kernel] : registry) {
     cout << std::left << std::setw(12) << name << ": " << std::fixed
-         << std::setprecision(3) << duration.count() << " ms" << endl;
+         << std::setprecision(3) << accumulated_times[name] / trials << " ms"
+         << endl;
   }
 }
 
