@@ -73,6 +73,7 @@ void print_heatmap(Matrix<T> &GPU_C, Matrix<T> &CPU_C, T precision) {
   std::pair<size_t, size_t> shapeGPU = GPU_C.shape();
   std::pair<size_t, size_t> shapeCPU = CPU_C.shape();
   assert(shapeGPU == shapeCPU);
+  assert(GPU_C.device == CPU && CPU_C.device == CPU)
   size_t rows = shapeGPU.first;
   size_t cols = shapeGPU.second;
   size_t grid_r = std::min(rows, (size_t)32);
