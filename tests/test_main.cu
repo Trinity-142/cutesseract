@@ -77,16 +77,16 @@ void print_heatmap(Matrix<T> &GPU_C, Matrix<T> &CPU_C, T precision) {
   size_t cols = shapeGPU.second;
   size_t grid_r = std::min(rows, (size_t)32);
   size_t grid_c = std::min(cols, (size_t)32);
-  size_t step_r = rows / grid_r;
-  size_t step_c = cols / grid_c;
+  size_t step_r = (rows + grid_r - 1) / grid_r;
+  size_t step_c = (cols + grid_c - 1) / grid_c;
 
   cout << "\nError Heatmap (" << grid_r << "x" << grid_c
        << " sampling):" << endl;
   for (size_t i = 0; i < grid_r; i++) {
     for (size_t j = 0; j < grid_c; j++) {
       bool has_error = false;
-      for (size_t bi = i * step_r; bi < (i + 1) * step_r; bi++) {
-        for (size_t bj = j * step_c; bj < (j + 1) * step_c; bj++) {
+      for (size_t bi = i * step_r; bi < std::min((i + 1) * step_r, rows); bi++) {
+        for (size_t bj = j * step_c; bj < std::min((j + 1) * step_c, cols); bj++) {
           if (std::abs(GPU_C.get(bi, bj) - CPU_C.get(bi, bj)) > precision) {
             has_error = true;
             break;
