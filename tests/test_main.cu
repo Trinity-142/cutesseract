@@ -33,8 +33,7 @@ typedef function<void(Matrix<fp32> &, Matrix<fp32> &, Matrix<fp32> &)>
     KernelFunc;
 
 template <typename T> T calculate_max_diff(Matrix<T> &A, Matrix<T> &B) {
-  A.cpu();
-  B.cpu();
+  assert(A.device == CPU && B.device == CPU);
   std::pair<size_t, size_t> shapeA = A.shape();
   std::pair<size_t, size_t> shapeB = B.shape();
   assert(shapeA == shapeB);
@@ -51,6 +50,7 @@ template <typename T> T calculate_max_diff(Matrix<T> &A, Matrix<T> &B) {
 }
 
 template <typename T> Matrix<T> mmul_cpu(Matrix<T> &A, Matrix<T> &B) {
+  assert(A.device == CPU && B.device == CPU);
   std::pair<size_t, size_t> shapeA = A.shape();
   std::pair<size_t, size_t> shapeB = B.shape();
 
@@ -73,7 +73,7 @@ void print_heatmap(Matrix<T> &GPU_C, Matrix<T> &CPU_C, T precision) {
   std::pair<size_t, size_t> shapeGPU = GPU_C.shape();
   std::pair<size_t, size_t> shapeCPU = CPU_C.shape();
   assert(shapeGPU == shapeCPU);
-  assert(GPU_C.device == CPU && CPU_C.device == CPU)
+  assert(GPU_C.device == CPU && CPU_C.device == CPU);
   size_t rows = shapeGPU.first;
   size_t cols = shapeGPU.second;
   size_t grid_r = std::min(rows, (size_t)32);
@@ -104,6 +104,8 @@ void print_heatmap(Matrix<T> &GPU_C, Matrix<T> &CPU_C, T precision) {
 
 void verify_result(Matrix<fp32> &GPU_C, Matrix<fp32> &CPU_C,
                    fp32 precision = 1e-3) {
+  GPU_C.cpu();
+  CPU_C.cpu();
   fp32 max_diff = calculate_max_diff(GPU_C, CPU_C);
   if (max_diff > precision) {
     cout << "[FAILED] Max difference: " << std::scientific << max_diff << endl;

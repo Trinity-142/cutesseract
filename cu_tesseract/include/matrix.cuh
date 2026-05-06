@@ -53,11 +53,9 @@ public:
 
   __host__ ~Matrix() {
     if (device == CUDA) {
-      if (device_ptr)
-        CUDA_CHECK(cudaFree(device_ptr));
+      CUDA_CHECK(cudaFree(device_ptr));
     } else {
-      if (cpu_ptr)
-        delete[] cpu_ptr;
+      delete[] cpu_ptr;
     }
   }
 
@@ -80,11 +78,9 @@ public:
       return *this;
 
     if (device == CPU) {
-      if (cpu_ptr)
-        delete[] cpu_ptr;
+      delete[] cpu_ptr;
     } else {
-      if (device_ptr)
-        CUDA_CHECK(cudaFree(device_ptr));
+      CUDA_CHECK(cudaFree(device_ptr));
     }
 
     rows = other.rows;
