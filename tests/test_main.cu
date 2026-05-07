@@ -104,8 +104,7 @@ void print_heatmap(Matrix<T> &GPU_C, Matrix<T> &CPU_C, T precision) {
 
 void verify_result(Matrix<fp32> &GPU_C, Matrix<fp32> &CPU_C,
                    fp32 precision = 1e-3) {
-  GPU_C.cpu();
-  CPU_C.cpu();
+  assert(GPU_C.device == CPU && CPU_C.device == CPU);
   fp32 max_diff = calculate_max_diff(GPU_C, CPU_C);
   if (max_diff > precision) {
     cout << "[FAILED] Max difference: " << std::scientific << max_diff << endl;
@@ -137,6 +136,7 @@ void run_test(KernelFunc kernel, size_t N, size_t K, size_t M, FillType fill,
 
     A.cpu();
     B.cpu();
+    G.cpu();
     Matrix<fp32> C = mmul_cpu(A, B);
     verify_result(G, C);
   }

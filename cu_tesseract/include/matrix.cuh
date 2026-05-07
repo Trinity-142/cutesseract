@@ -32,11 +32,11 @@ template <typename T> class Matrix {
   T *device_ptr;
 
   DataLayout layout;
-  DataDevice device;
 
   size_t rows, cols, num_elements;
 
 public:
+  DataDevice device;
   __host__ Matrix(size_t rows, size_t cols, DataLayout layout,
                   DataDevice device)
       : rows(rows), cols(cols), device(device), layout(layout),
