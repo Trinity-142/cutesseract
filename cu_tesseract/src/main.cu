@@ -1,5 +1,6 @@
 #include "matrix.cuh"
 #include "kernels.cuh"
+#include "strassen_kernel.cuh"
 #include "utils.cuh"
 
 #include <iostream>
@@ -118,6 +119,7 @@ signed main() {
     std::chrono::duration<double, std::milli> avg_block = std::chrono::duration<double, std::milli>::zero();
     std::chrono::duration<double, std::milli> avg_element = std::chrono::duration<double, std::milli>::zero();
     std::chrono::duration<double, std::milli> avg_wmma = std::chrono::duration<double, std::milli>::zero();
+    std::chrono::duration<double, std::milli> avg_strassen = std::chrono::duration<double, std::milli>::zero();
 
     test_blockwise(*input_matrices_a[num_tries], *input_matrices_b[num_tries], *input_matrices_c[num_tries]);
     test_elementwise(*input_matrices_a[num_tries], *input_matrices_b[num_tries], *input_matrices_c[num_tries]);
@@ -155,10 +157,10 @@ signed main() {
     printf("TFLOPS: %.2f\n", (static_cast<std::chrono::duration<double, std::milli>>(n) * k * m * 2) / ms / 1e9);
 
     for (size_t i = 0; i < num_tries; i++) {
-        avg_element += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
+        avg_strassen += test_strassen(*input_matrices_a[i], *input_matrices_b[i], *input_matrices_c[i]);
     }
-
-    cout << "Strassen GPU multiplication duration: ~" << avg_element / (num_tries) << "\n";
+    
+    cout << "Strassen GPU multiplication duration: ~" << avg_strassen / (num_tries) << "\n";
 
     return 0;
 }

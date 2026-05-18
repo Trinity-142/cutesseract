@@ -156,14 +156,15 @@ static __global__ void _gemm_nkm_wmma_simple(
     fp32 *C
 ) {
     size_t threadId = threadIdx.y * blockDim.x + threadIdx.x;
-    size_t totalThreads = blockDim.x * blockDim.y;
-    size_t warpId = threadId / threadsPerWarp;
-    size_t warpRow = warpId / warpBlockSize;
-    size_t warpCol = warpId % warpBlockSize;
+    size_t warpId = threadId / threadsPerWarp;                          // [0..3] 2x2 warps for each thread block
+    size_t warpRow = warpId / warpBlockSize;                            // [0, 1]
+    size_t warpCol = warpId % warpBlockSize;                            // [0, 1]
+    // top left block corner
     size_t globalBlockRow = blockIdx.y * (warpBlockSize * tileSize);
     size_t globalBlockCol = blockIdx.x * (warpBlockSize * tileSize);
 
-    __shared__ half block_A[warpBlockSize * tileSize][tileSize + PAD];
+    // 32x16 from A * 16x32 from B = 32x32 in C calcs each thread block. 4 mmuls of 16x16 tiles -> 1 mmul 16x16 for each warp
+    __shared__ half block_A[warpBlockSize * tileSize][tileSize + PAD];  // PAD to resolve smem bank conflicts (https://modal.com/gpu-glossary/perf/bank-conflict)
     __shared__ half block_B[tileSize][warpBlockSize * tileSize + PAD];
 
     wmma::fragment<wmma::matrix_a, tileSize, tileSize, tileSize, half, wmma::row_major> a_frag;
@@ -172,19 +173,20 @@ static __global__ void _gemm_nkm_wmma_simple(
     wmma::fill_fragment(c_frag, 0.0f);
 
     for (size_t i = 0; i < K; i += tileSize) {
-        size_t row_A = threadId / 4;
+        // 32x16 = 512 half (2 bytes) elements, 128 threads in block -> each thread should store 4 half elements (or one fp64) to smem
+        size_t row_A = threadId / 4;                                    // 16 / 4 = 4 threads per row
         size_t col_A = (threadId % 4) * 4;
         fp64 val_A = *(reinterpret_cast<fp64*>(&A[(globalBlockRow + row_A) * K + (i + col_A)]));
         *(reinterpret_cast<fp64*>(&block_A[row_A][col_A])) = val_A;
 
-        size_t row_B = threadId / 8;
+        size_t row_B = threadId / 8;                                    // 32 / 4 = 8 threads per row
         size_t col_B = (threadId % 8) * 4;
         fp64 val_B = *(reinterpret_cast<fp64*>(&B[(i + row_B) * M + (globalBlockCol + col_B)]));
         *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = val_B;
         __syncthreads();
 
-        half* warp_A = &block_A[warpRow * tileSize][0];
-        half* warp_B = &block_B[0][warpCol * tileSize];
+        half* warp_A = &block_A[warpRow * tileSize][0];                 // top left corner of 16x16 tile from A for that warp
+        half* warp_B = &block_B[0][warpCol * tileSize];                 // top left corner of 16x16 tile from B for that warp
         wmma::load_matrix_sync(a_frag, warp_A, tileSize + PAD);
         wmma::load_matrix_sync(b_frag, warp_B, warpBlockSize * tileSize + PAD);
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
@@ -212,7 +214,7 @@ __host__ void _gemm_nkm_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<f
     assert(K % tileSize == 0);
     assert(N % (tileSize * warpBlockSize) == 0);
     assert(M % (tileSize * warpBlockSize) == 0);
-    dim3 block_dim(warpBlockSize * threadsPerWarp, warpBlockSize);
+    dim3 block_dim(warpBlockSize * threadsPerWarp, warpBlockSize);                  // x:[0..63], y:[0,1] -> 2x2 warp grid
     dim3 grid_dim((M + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize),
                 (N + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize));
     static_assert(warpBlockSize * warpBlockSize * threadsPerWarp <= 1024);
