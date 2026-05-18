@@ -149,11 +149,12 @@ constexpr int tileSize = 16;
 constexpr int threadsPerWarp = 32;
 constexpr size_t warpBlockSize = 2;
 constexpr size_t PAD = 8;
-template <size_t N, size_t K, size_t M> // A(n*k) x B(k*m) = c(n*m)
+// A(n*k) x B(k*m) = c(n*m)
 static __global__ void _gemm_nkm_wmma_simple(
     half *A,
     half *B,
-    fp32 *C
+    fp32 *C,
+    size_t N, size_t K, size_t M
 ) {
     size_t threadId = threadIdx.y * blockDim.x + threadIdx.x;
     size_t warpId = threadId / threadsPerWarp;                          // [0..3] 2x2 warps for each thread block
@@ -197,8 +198,7 @@ static __global__ void _gemm_nkm_wmma_simple(
     wmma::store_matrix_sync(C + globalRow * M + globalCol, c_frag, M, wmma::mem_row_major);
 }
 
-template <size_t N, size_t K, size_t M> // n*k x k*m = n*m
-__host__ void _gemm_nkm_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<fp32> &C) {
+__host__ void _gemm_nkm_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<fp32> &C, size_t N, size_t K, size_t M) {
     assert(A.shape().first == N && A.shape().second == K);
     assert(B.shape().first == K && B.shape().second == M);
     assert(C.shape().first == N && C.shape().second == M);
@@ -218,6 +218,6 @@ __host__ void _gemm_nkm_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<f
     dim3 grid_dim((M + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize),
                 (N + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize));
     static_assert(warpBlockSize * warpBlockSize * threadsPerWarp <= 1024);
-    _gemm_nkm_wmma_simple<N, K, M><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item());
+    _gemm_nkm_wmma_simple<<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
     CUDA_CHECK(cudaDeviceSynchronize());
 }
