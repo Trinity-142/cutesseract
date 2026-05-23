@@ -152,8 +152,8 @@ constexpr size_t PAD = 8;
 // A(n*k) x B(k*m) = c(n*m)
 template <bool IS_ALIGNED>
 static __global__ void _gemm_nkm_wmma_simple(
-    half *A,
-    half *B,
+    fp16 *A,
+    fp16 *B,
     fp32 *C,
     size_t N, size_t K, size_t M
 ) {
@@ -166,16 +166,16 @@ static __global__ void _gemm_nkm_wmma_simple(
     size_t globalBlockCol = blockIdx.x * (warpBlockSize * tileSize);
 
     // 32x16 from A * 16x32 from B = 32x32 in C calcs each thread block. 4 mmuls of 16x16 tiles -> 1 mmul 16x16 for each warp
-    __shared__ half block_A[warpBlockSize * tileSize][tileSize + PAD];  // PAD to resolve smem bank conflicts (https://modal.com/gpu-glossary/perf/bank-conflict)
-    __shared__ half block_B[tileSize][warpBlockSize * tileSize + PAD];
+    __shared__ fp16 block_A[warpBlockSize * tileSize][tileSize + PAD];  // PAD to resolve smem bank conflicts (https://modal.com/gpu-glossary/perf/bank-conflict)
+    __shared__ fp16 block_B[tileSize][warpBlockSize * tileSize + PAD];
 
-    wmma::fragment<wmma::matrix_a, tileSize, tileSize, tileSize, half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, tileSize, tileSize, tileSize, half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::matrix_a, tileSize, tileSize, tileSize, fp16, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, tileSize, tileSize, tileSize, fp16, wmma::row_major> b_frag;
     wmma::fragment<wmma::accumulator, tileSize, tileSize, tileSize, fp32> c_frag;
     wmma::fill_fragment(c_frag, 0.0f);
 
     for (size_t i = 0; i < K; i += tileSize) {
-        // 32x16 = 512 half (2 bytes) elements, 128 threads in block -> each thread should store 4 half elements (or one fp64) to smem
+        // 32x16 = 512 fp16 elements, 128 threads in block -> each thread should store 4 fp16 elements (or one fp64) to smem
         size_t row_A = threadId / 4;                                    // 16 / 4 = 4 threads per row
         size_t col_A = (threadId % 4) * 4;
         size_t global_row_A = globalBlockRow + row_A;
@@ -189,8 +189,8 @@ static __global__ void _gemm_nkm_wmma_simple(
        *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = safe_load<IS_ALIGNED>(B, global_row_B, global_col_B, K, M, N);
         __syncthreads();
 
-        half* warp_A = &block_A[warpRow * tileSize][0];                 // top left corner of 16x16 tile from A for that warp
-        half* warp_B = &block_B[0][warpCol * tileSize];                 // top left corner of 16x16 tile from B for that warp
+        fp16* warp_A = &block_A[warpRow * tileSize][0];                 // top left corner of 16x16 tile from A for that warp
+        fp16* warp_B = &block_B[0][warpCol * tileSize];                 // top left corner of 16x16 tile from B for that warp
         wmma::load_matrix_sync(a_frag, warp_A, tileSize + PAD);
         wmma::load_matrix_sync(b_frag, warp_B, warpBlockSize * tileSize + PAD);
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
@@ -218,7 +218,7 @@ static __global__ void _gemm_nkm_wmma_simple(
     }
 }
 
-__host__ void _gemm_nkm_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<fp32> &C, size_t N, size_t K, size_t M) {
+__host__ void _gemm_nkm_wmma_launcher(Matrix<fp16> &A, Matrix<fp16> &B, Matrix<fp32> &C, size_t N, size_t K, size_t M) {
     assert(A.shape().first == N && A.shape().second == K);
     assert(B.shape().first == K && B.shape().second == M);
     assert(C.shape().first == N && C.shape().second == M);

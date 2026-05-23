@@ -68,8 +68,8 @@ std::chrono::duration<double, std::milli> test_wmma(Matrix<fp32> &A, Matrix<fp32
     A.cuda();
     B.cuda();
     C.cuda();
-    Matrix<half> A_fp16(n_wmma, k_wmma, ROW_WISE, CUDA);
-    Matrix<half> B_fp16(k_wmma, m_wmma, ROW_WISE, CUDA);
+    Matrix<fp16> A_fp16(n_wmma, k_wmma, ROW_WISE, CUDA);
+    Matrix<fp16> B_fp16(k_wmma, m_wmma, ROW_WISE, CUDA);
 
     size_t threads = 256;
     castFp32ToFp16<<<(n_wmma * k_wmma + threads - 1) / threads, threads>>>(A.item(), A_fp16.item(), n_wmma * k_wmma);

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <curand.h>
 #include <stdexcept>
@@ -23,7 +22,7 @@ inline void curandCheckCall(curandStatus_t code, const char *file, int line) {
   }
 }
 
-__global__ inline void castFp32ToFp16(const fp32* in, half* out, const size_t size) {
+__global__ __forceinline__ void castFp32ToFp16(const fp32* in, fp16* out, const size_t size) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         out[idx] = __float2half(in[idx]);
@@ -32,7 +31,7 @@ __global__ inline void castFp32ToFp16(const fp32* in, half* out, const size_t si
 
 template <bool IS_ALIGNED>
 __device__ __forceinline__ fp64 safe_load(
-    half* mat,
+    fp16* mat,
     size_t global_row,
     size_t global_col,
     size_t max_rows,
@@ -43,11 +42,11 @@ __device__ __forceinline__ fp64 safe_load(
     if constexpr (IS_ALIGNED) {
         val = *(reinterpret_cast<const fp64*>(&mat[global_row * stride + global_col]));
     } else if (global_row < max_rows) {
-        half* val_half = reinterpret_cast<half*>(&val);
+        fp16* val_fp16 = reinterpret_cast<fp16*>(&val);
         #pragma unroll
         for (size_t j = 0; j < 4; ++j) {
             if (global_col + j < max_cols) {
-                val_half[j] = mat[global_row * stride + global_col + j];
+                val_fp16[j] = mat[global_row * stride + global_col + j];
             }
         }
     }
