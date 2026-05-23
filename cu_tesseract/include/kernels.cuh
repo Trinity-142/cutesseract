@@ -150,6 +150,7 @@ constexpr int threadsPerWarp = 32;
 constexpr size_t warpBlockSize = 2;
 constexpr size_t PAD = 8;
 // A(n*k) x B(k*m) = c(n*m)
+template <bool IS_ALIGNED>
 static __global__ void _gemm_nkm_wmma_simple(
     half *A,
     half *B,
@@ -177,13 +178,15 @@ static __global__ void _gemm_nkm_wmma_simple(
         // 32x16 = 512 half (2 bytes) elements, 128 threads in block -> each thread should store 4 half elements (or one fp64) to smem
         size_t row_A = threadId / 4;                                    // 16 / 4 = 4 threads per row
         size_t col_A = (threadId % 4) * 4;
-        fp64 val_A = *(reinterpret_cast<fp64*>(&A[(globalBlockRow + row_A) * K + (i + col_A)]));
-        *(reinterpret_cast<fp64*>(&block_A[row_A][col_A])) = val_A;
+        size_t global_row_A = globalBlockRow + row_A;
+        size_t global_col_A = i + col_A;
+        *(reinterpret_cast<fp64*>(&block_A[row_A][col_A])) = safe_load<IS_ALIGNED>(A, global_row_A, global_col_A, N, K, K);
 
         size_t row_B = threadId / 8;                                    // 32 / 4 = 8 threads per row
         size_t col_B = (threadId % 8) * 4;
-        fp64 val_B = *(reinterpret_cast<fp64*>(&B[(i + row_B) * M + (globalBlockCol + col_B)]));
-        *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = val_B;
+        size_t global_row_B = i + row_B;
+        size_t global_col_B = globalBlockCol + col_B;
+       *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = safe_load<IS_ALIGNED>(B, global_row_B, global_col_B, K, M, N);
         __syncthreads();
 
         half* warp_A = &block_A[warpRow * tileSize][0];                 // top left corner of 16x16 tile from A for that warp
@@ -195,7 +198,24 @@ static __global__ void _gemm_nkm_wmma_simple(
     }
     size_t globalRow = globalBlockRow + warpRow * tileSize;
     size_t globalCol = globalBlockCol + warpCol * tileSize;
-    wmma::store_matrix_sync(C + globalRow * M + globalCol, c_frag, M, wmma::mem_row_major);
+    if constexpr (IS_ALIGNED) {
+        wmma::store_matrix_sync(C + globalRow * M + globalCol, c_frag, M, wmma::mem_row_major);
+    } else {
+        __shared__ float block_C[warpBlockSize * tileSize][warpBlockSize * tileSize];
+        float* warp_C = &block_C[warpRow * tileSize][warpCol * tileSize];
+        wmma::store_matrix_sync(warp_C, c_frag, warpBlockSize * tileSize, wmma::mem_row_major);
+        __syncthreads();
+
+        for (size_t i = threadId; i < (warpBlockSize * tileSize) * (warpBlockSize * tileSize); i += 128) {
+            size_t local_r = i / (warpBlockSize * tileSize);
+            size_t local_c = i % (warpBlockSize * tileSize);
+            size_t g_r = globalBlockRow + local_r;
+            size_t g_c = globalBlockCol + local_c;
+            if (g_r < N && g_c < M) {
+                C[g_r * M + g_c] = block_C[local_r][local_c];
+            }
+        }
+    }
 }
 
 __host__ void _gemm_nkm_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<fp32> &C, size_t N, size_t K, size_t M) {
@@ -211,13 +231,15 @@ __host__ void _gemm_nkm_wmma_launcher(Matrix<half> &A, Matrix<half> &B, Matrix<f
     B.cuda();
     C.cuda();
 
-    assert(K % tileSize == 0);
-    assert(N % (tileSize * warpBlockSize) == 0);
-    assert(M % (tileSize * warpBlockSize) == 0);
+    bool is_aligned = (K % tileSize == 0) && (N % (tileSize * warpBlockSize) == 0) && (M % (tileSize * warpBlockSize) == 0);
     dim3 block_dim(warpBlockSize * threadsPerWarp, warpBlockSize);                  // x:[0..63], y:[0,1] -> 2x2 warp grid
     dim3 grid_dim((M + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize),
                 (N + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize));
     static_assert(warpBlockSize * warpBlockSize * threadsPerWarp <= 1024);
-    _gemm_nkm_wmma_simple<<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
+    if (is_aligned) {
+        _gemm_nkm_wmma_simple<true><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
+    } else {
+        _gemm_nkm_wmma_simple<false><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
+    }
     CUDA_CHECK(cudaDeviceSynchronize());
 }
