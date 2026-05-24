@@ -45,7 +45,7 @@ void py_gemm_nnn_block_simple_fp32(
     Matrix<fp32> mat_B((fp32 *)B.data_ptr(), B.size(0), B.size(1), DataLayout::ROW_WISE, DataDevice::CUDA);
     Matrix<fp32> mat_C((fp32 *)C.data_ptr(), C.size(0), C.size(1), DataLayout::ROW_WISE, DataDevice::CUDA);
 
-    _gemm_nn_block_launcher<fp32, BS>(mat_A, mat_B, mat_C);
+    _gemm_nn_block_launcher<fp32>(mat_A, mat_B, mat_C, BS);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

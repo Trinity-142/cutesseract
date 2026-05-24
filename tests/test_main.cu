@@ -33,7 +33,7 @@ typedef function<void(Matrix<fp32> &, Matrix<fp32> &, Matrix<fp32> &)>
     KernelFunc;
 
 template <typename T> T calculate_max_diff(Matrix<T> &A, Matrix<T> &B) {
-  assert(A.device == CPU && B.device == CPU);
+  assert(A.device == DataDevice::CPU && B.device == DataDevice::CPU);
   std::pair<size_t, size_t> shapeA = A.shape();
   std::pair<size_t, size_t> shapeB = B.shape();
   assert(shapeA == shapeB);
@@ -50,12 +50,12 @@ template <typename T> T calculate_max_diff(Matrix<T> &A, Matrix<T> &B) {
 }
 
 template <typename T> Matrix<T> mmul_cpu(Matrix<T> &A, Matrix<T> &B) {
-  assert(A.device == CPU && B.device == CPU);
+  assert(A.device == DataDevice::CPU && B.device == DataDevice::CPU);
   std::pair<size_t, size_t> shapeA = A.shape();
   std::pair<size_t, size_t> shapeB = B.shape();
 
   assert(shapeA.second == shapeB.first);
-  Matrix<T> C(shapeA.first, shapeB.second, ROW_WISE, CPU);
+  Matrix<T> C(shapeA.first, shapeB.second, DataLayout::ROW_WISE, DataDevice::CPU);
   for (size_t i = 0; i < shapeA.first; i++) {
     for (size_t j = 0; j < shapeB.second; j++) {
       double sum = 0.0;
@@ -73,7 +73,7 @@ void print_heatmap(Matrix<T> &GPU_C, Matrix<T> &CPU_C, T precision) {
   std::pair<size_t, size_t> shapeGPU = GPU_C.shape();
   std::pair<size_t, size_t> shapeCPU = CPU_C.shape();
   assert(shapeGPU == shapeCPU);
-  assert(GPU_C.device == CPU && CPU_C.device == CPU);
+  assert(GPU_C.device == DataDevice::CPU && CPU_C.device == DataDevice::CPU);
   size_t rows = shapeGPU.first;
   size_t cols = shapeGPU.second;
   size_t grid_r = std::min(rows, (size_t)32);
@@ -104,7 +104,7 @@ void print_heatmap(Matrix<T> &GPU_C, Matrix<T> &CPU_C, T precision) {
 
 void verify_result(Matrix<fp32> &GPU_C, Matrix<fp32> &CPU_C,
                    fp32 precision = 1e-3) {
-  assert(GPU_C.device == CPU && CPU_C.device == CPU);
+  assert(GPU_C.device == DataDevice::CPU && CPU_C.device == DataDevice::CPU);
   fp32 max_diff = calculate_max_diff(GPU_C, CPU_C);
   if (max_diff > precision) {
     cout << "[FAILED] Max difference: " << std::scientific << max_diff << endl;
@@ -117,9 +117,9 @@ void verify_result(Matrix<fp32> &GPU_C, Matrix<fp32> &CPU_C,
 void run_test(KernelFunc kernel, size_t N, size_t K, size_t M, FillType fill,
               int runs = RUNS_NUM) {
   for (int i = 0; i < runs; i++) {
-    Matrix<fp32> A(N, K, ROW_WISE, CUDA);
-    Matrix<fp32> B(K, M, ROW_WISE, CUDA);
-    Matrix<fp32> G(N, M, ROW_WISE, CUDA);
+    Matrix<fp32> A(N, K, DataLayout::ROW_WISE, DataDevice::CUDA);
+    Matrix<fp32> B(K, M, DataLayout::ROW_WISE, DataDevice::CUDA);
+    Matrix<fp32> G(N, M, DataLayout::ROW_WISE, DataDevice::CUDA);
 
     if (fill == FillType::RANDOM) {
       A.fill_random((unsigned long long)i);
@@ -150,14 +150,14 @@ void run_benchmark(map<string, KernelFunc> &registry, size_t size = 1024,
   map<string, double> accumulated_times;
 
   for (int t = 0; t < trials; t++) {
-    Matrix<fp32> A(size, size, ROW_WISE, CUDA);
-    Matrix<fp32> B(size, size, ROW_WISE, CUDA);
+    Matrix<fp32> A(size, size, DataLayout::ROW_WISE, DataDevice::CUDA);
+    Matrix<fp32> B(size, size, DataLayout::ROW_WISE, DataDevice::CUDA);
     A.fill_random((unsigned long long)t);
     B.fill_random((unsigned long long)t + 1337);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     for (auto const &[name, kernel] : registry) {
-      Matrix<fp32> C(size, size, ROW_WISE, CUDA);
+      Matrix<fp32> C(size, size, DataLayout::ROW_WISE, DataDevice::CUDA);
       auto start = std::chrono::high_resolution_clock::now();
       kernel(A, B, C);
       CUDA_CHECK(cudaDeviceSynchronize());
@@ -195,8 +195,8 @@ void menu() {
     size_t K = A.shape().second;
     size_t M = B.shape().second;
 
-    Matrix<fp16> A_fp16(N, K, ROW_WISE, CUDA);
-    Matrix<fp16> B_fp16(K, M, ROW_WISE, CUDA);
+    Matrix<fp16> A_fp16(N, K, DataLayout::ROW_WISE, DataDevice::CUDA);
+    Matrix<fp16> B_fp16(K, M, DataLayout::ROW_WISE, DataDevice::CUDA);
 
     size_t threads = 256;
     castFp32ToFp16<<<(N * K + threads - 1) / threads, threads>>>(A.item(), A_fp16.item(), N * K);
