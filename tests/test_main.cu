@@ -190,6 +190,20 @@ void menu() {
     _gemm_nn_block_launcher<fp32>(A, B, C);
   };
   kernel_registry["Strassen"] = _gemm_strassen_launcher<fp32>;
+  kernel_registry["WMMA"] = [](Matrix<fp32> &A, Matrix<fp32> &B, Matrix<fp32> &C) {
+    size_t N = A.shape().first;
+    size_t K = A.shape().second;
+    size_t M = B.shape().second;
+
+    Matrix<fp16> A_fp16(N, K, ROW_WISE, CUDA);
+    Matrix<fp16> B_fp16(K, M, ROW_WISE, CUDA);
+
+    size_t threads = 256;
+    castFp32ToFp16<<<(N * K + threads - 1) / threads, threads>>>(A.item(), A_fp16.item(), N * K);
+    castFp32ToFp16<<<(K * M + threads - 1) / threads, threads>>>(B.item(), B_fp16.item(), K * M);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    _gemm_nkm_wmma_launcher(A_fp16, B_fp16, C);
+  };
 
   while (true) {
     cout << "\n=== CuTesseract Test CLI ===" << endl;

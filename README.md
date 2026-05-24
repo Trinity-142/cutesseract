@@ -24,3 +24,13 @@ cmake -G Ninja ..
 ninja
 ./cutesseract
 ```
+
+### Tests
+```
+Blockwise GPU multiplication duration: ~51.7303ms
+TFLOPS: 1.12
+Elementwise GPU multiplication duration: ~68.03ms
+TFLOPS: 0.85
+Warp Matrix Multiply-Accumulate GPU multiplication duration: ~4.11489ms
+TFLOPS: 14.09
+```
