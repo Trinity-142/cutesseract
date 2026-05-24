@@ -3,12 +3,13 @@
 ### usage
 
 ```shell
-docker build -t cutesseract-env build/
+docker build --network host -t cutesseract-env docker/
 docker run --rm -it --gpus all --cap-add=SYS_ADMIN --network host --ipc host -v $(pwd):/workspace -w /workspace cutesseract-env /bin/bash
-mkdir build && cd build
-cmake -G Ninja ..
-ninja
-./cutesseract
+# mkdir build && cd build
+# cmake -G Ninja ..
+# ninja
+# ./cutesseract
+COMPUTE_CAP=86 pip install . --no-build-isolation
 ```
 
 ### Tests

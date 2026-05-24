@@ -1,6 +1,7 @@
 
 import torch
 from py_cutesseract_cuda import (
+    gemm_wmma_fp16,
     gemm_nkm_simple_fp32,
     gemm_nnn_block_simple_fp32_bs16,
     gemm_nnn_block_simple_fp32_bs8,
@@ -42,3 +43,16 @@ def matmul_square_fp32(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 
     return res
+
+def matmul_wmma(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+
+    assert a.dim() == 2 and b.dim() == 2
+    assert a.device == b.device
+    assert a.dtype == torch.float16
+    assert b.dtype == torch.float16
+
+    res = torch.empty((a.shape[0], b.shape[1]), dtype=torch.float32, device=a.device)
+
+    gemm_wmma_fp16(a, b, res)
+
+    return res.to(a.dtype)
