@@ -29,9 +29,9 @@ __global__ void castFp32ToFp16(const fp32* in, fp16* out, const size_t size) {
     }
 }
 
-template <bool IS_ALIGNED>
+template <typename T, bool IS_ALIGNED>
 __device__ __forceinline__ fp64 safe_load(
-    fp16* mat,
+    T* mat,
     size_t global_row,
     size_t global_col,
     size_t max_rows,
@@ -42,7 +42,7 @@ __device__ __forceinline__ fp64 safe_load(
     if constexpr (IS_ALIGNED) {
         val = *(reinterpret_cast<const fp64*>(&mat[global_row * stride + global_col]));
     } else if (global_row < max_rows) {
-        fp16* val_fp16 = reinterpret_cast<fp16*>(&val);
+        T* val_fp16 = reinterpret_cast<T*>(&val);
         #pragma unroll
         for (size_t j = 0; j < 4; ++j) {
             if (global_col + j < max_cols) {

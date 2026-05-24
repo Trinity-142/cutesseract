@@ -67,7 +67,7 @@ void py_gemm_wmma(
     Matrix<T> mat_B(reinterpret_cast<T *>(B.data_ptr()), B.size(0), B.size(1), DataLayout::ROW_WISE, DataDevice::CUDA);
     Matrix<fp32> mat_C(reinterpret_cast<fp32 *>(C.data_ptr()), C.size(0), C.size(1), DataLayout::ROW_WISE, DataDevice::CUDA);
 
-    _gemm_nkm_wmma_launcher(mat_A, mat_B, mat_C);
+    _gemm_nkm_wmma_launcher<T>(mat_A, mat_B, mat_C);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -76,4 +76,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("gemm_nnn_block_simple_fp32_bs8", &py_gemm_nnn_block_simple_fp32<8>, "simple gpu gemm for FP32 square matrices with shape % 8 == 0");
     m.def("gemm_nnn_block_simple_fp32_bs4", &py_gemm_nnn_block_simple_fp32<4>, "simple gpu gemm for FP32 square matrices with shape % 4 == 0");
     m.def("gemm_wmma_fp16", &py_gemm_wmma<fp16>, "wmaa gpu gemm for FP16 A & B matrices and FP32 C matirx");
+    m.def("gemm_wmma_bf16", &py_gemm_wmma<bf16>, "wmaa gpu gemm for BF16 A & B matrices and FP32 C matirx");
 }

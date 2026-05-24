@@ -145,10 +145,10 @@ constexpr int threadsPerWarp = 32;
 constexpr size_t warpBlockSize = 2;
 constexpr size_t PAD = 8;
 // A(n*k) x B(k*m) = c(n*m)
-template <bool IS_ALIGNED>
+template <typename T, bool IS_ALIGNED>
 static __global__ void _gemm_nkm_wmma_simple(
-    fp16 *A,
-    fp16 *B,
+    T *A,
+    T *B,
     fp32 *C,
     size_t N, size_t K, size_t M
 ) {
@@ -161,11 +161,11 @@ static __global__ void _gemm_nkm_wmma_simple(
     size_t globalBlockCol = blockIdx.x * (warpBlockSize * tileSize);
 
     // 32x16 from A * 16x32 from B = 32x32 in C calcs each thread block. 4 mmuls of 16x16 tiles -> 1 mmul 16x16 for each warp
-    __shared__ fp16 block_A[warpBlockSize * tileSize][tileSize + PAD];  // PAD to resolve smem bank conflicts (https://modal.com/gpu-glossary/perf/bank-conflict)
-    __shared__ fp16 block_B[tileSize][warpBlockSize * tileSize + PAD];
+    __shared__ T block_A[warpBlockSize * tileSize][tileSize + PAD];  // PAD to resolve smem bank conflicts (https://modal.com/gpu-glossary/perf/bank-conflict)
+    __shared__ T block_B[tileSize][warpBlockSize * tileSize + PAD];
 
-    wmma::fragment<wmma::matrix_a, tileSize, tileSize, tileSize, fp16, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, tileSize, tileSize, tileSize, fp16, wmma::row_major> b_frag;
+    wmma::fragment<wmma::matrix_a, tileSize, tileSize, tileSize, T, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, tileSize, tileSize, tileSize, T, wmma::row_major> b_frag;
     wmma::fragment<wmma::accumulator, tileSize, tileSize, tileSize, fp32> c_frag;
     wmma::fill_fragment(c_frag, 0.0f);
 
@@ -175,17 +175,17 @@ static __global__ void _gemm_nkm_wmma_simple(
         size_t col_A = (threadId % 4) * 4;
         size_t global_row_A = globalBlockRow + row_A;
         size_t global_col_A = i + col_A;
-        *(reinterpret_cast<fp64*>(&block_A[row_A][col_A])) = safe_load<IS_ALIGNED>(A, global_row_A, global_col_A, N, K, K);
+        *(reinterpret_cast<fp64*>(&block_A[row_A][col_A])) = safe_load<T, IS_ALIGNED>(A, global_row_A, global_col_A, N, K, K);
 
         size_t row_B = threadId / 8;                                    // 32 / 4 = 8 threads per row
         size_t col_B = (threadId % 8) * 4;
         size_t global_row_B = i + row_B;
         size_t global_col_B = globalBlockCol + col_B;
-       *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = safe_load<IS_ALIGNED>(B, global_row_B, global_col_B, K, M, N);
+       *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = safe_load<T, IS_ALIGNED>(B, global_row_B, global_col_B, K, M, M);
         __syncthreads();
 
-        fp16* warp_A = &block_A[warpRow * tileSize][0];                 // top left corner of 16x16 tile from A for that warp
-        fp16* warp_B = &block_B[0][warpCol * tileSize];                 // top left corner of 16x16 tile from B for that warp
+        T* warp_A = &block_A[warpRow * tileSize][0];                 // top left corner of 16x16 tile from A for that warp
+        T* warp_B = &block_B[0][warpCol * tileSize];                 // top left corner of 16x16 tile from B for that warp
         wmma::load_matrix_sync(a_frag, warp_A, tileSize + PAD);
         wmma::load_matrix_sync(b_frag, warp_B, warpBlockSize * tileSize + PAD);
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
@@ -213,8 +213,10 @@ static __global__ void _gemm_nkm_wmma_simple(
     }
 }
 
+template <typename T = fp16>
+__host__ void _gemm_nkm_wmma_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<fp32> &C) {
+    static_assert(std::is_same<T, fp16>::value || std::is_same<T, bf16>::value, "WMMA kernel supports only FP16 or BF16 input");
 
-__host__ void _gemm_nkm_wmma_launcher(Matrix<fp16> &A, Matrix<fp16> &B, Matrix<fp32> &C) {
     size_t N = A.shape().first;
     size_t K = A.shape().second;
     size_t M = B.shape().second;
@@ -233,9 +235,9 @@ __host__ void _gemm_nkm_wmma_launcher(Matrix<fp16> &A, Matrix<fp16> &B, Matrix<f
                 (N + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize));
     static_assert(warpBlockSize * warpBlockSize * threadsPerWarp <= 1024);
     if (is_aligned) {
-        _gemm_nkm_wmma_simple<true><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
+        _gemm_nkm_wmma_simple<T, true><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
     } else {
-        _gemm_nkm_wmma_simple<false><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
+        _gemm_nkm_wmma_simple<T, false><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
     }
     CUDA_CHECK(cudaDeviceSynchronize());
 }

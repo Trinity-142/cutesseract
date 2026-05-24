@@ -84,5 +84,16 @@ def main():
     print('cutesseract rect wmma fp16: ', end='')
     bench_cutesseract(gemm_wmma_fp16, *rect_samples, out_dtype=torch.float32)
 
+    del rect_samples
+    gc.collect()
+
+    rect_samples = generate_samples(10, (2048, 8192, 2048), device='cuda:0', dtype=torch.bfloat16)
+
+    print('torch rect bf16: ', end='')
+    bench_torch(*rect_samples)
+
+    print('cutesseract rect wmma bf16: ', end='')
+    bench_cutesseract(gemm_wmma_fp16, *rect_samples, out_dtype=torch.float32)
+
 if __name__ == '__main__':
     main()
