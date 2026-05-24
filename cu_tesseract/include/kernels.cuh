@@ -206,7 +206,7 @@ static __global__ void _gemm_nkm_wmma_simple(
         wmma::store_matrix_sync(warp_C, c_frag, warpBlockSize * tileSize, wmma::mem_row_major);
         __syncthreads();
 
-        for (size_t i = threadId; i < (warpBlockSize * tileSize) * (warpBlockSize * tileSize); i += 128) {
+        for (size_t i = threadId; i < (warpBlockSize * tileSize) * (warpBlockSize * tileSize); i += blockDim.x * blockDim.y) {
             size_t local_r = i / (warpBlockSize * tileSize);
             size_t local_c = i % (warpBlockSize * tileSize);
             size_t g_r = globalBlockRow + local_r;
