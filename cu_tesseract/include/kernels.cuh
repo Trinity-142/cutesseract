@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <crt/mma.h>
 
 #include "dtypes.cuh"
 #include "matrix.cuh"
 #include "utils.cuh"
+using namespace nvcuda;
 
 
 /*
