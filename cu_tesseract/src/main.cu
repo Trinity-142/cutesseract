@@ -78,7 +78,7 @@ std::chrono::duration<double, std::milli> test_wmma(Matrix<fp32> &A, Matrix<fp32
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    _gemm_nkm_wmma_launcher(A_fp16, B_fp16, C, n_wmma, k_wmma, m_wmma);
+    _gemm_nkm_wmma_launcher(A_fp16, B_fp16, C);
 
     std::chrono::duration<double, std::milli> res = std::chrono::high_resolution_clock::now() - start_time;
 

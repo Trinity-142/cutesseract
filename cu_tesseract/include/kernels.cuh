@@ -220,10 +220,10 @@ static __global__ void _gemm_nkm_wmma_simple(
     }
 }
 
-__host__ void _gemm_nkm_wmma_launcher(Matrix<fp16> &A, Matrix<fp16> &B, Matrix<fp32> &C, size_t N, size_t K, size_t M) {
-    assert(A.shape().first == N && A.shape().second == K);
-    assert(B.shape().first == K && B.shape().second == M);
-    assert(C.shape().first == N && C.shape().second == M);
+__host__ void _gemm_nkm_wmma_launcher(Matrix<fp16> &A, Matrix<fp16> &B, Matrix<fp32> &C) {
+    size_t N = A.shape().first;
+    size_t K = A.shape().second;
+    size_t M = B.shape().second;
 
     assert(A.get_layout() == ROW_WISE);
     assert(B.get_layout() == ROW_WISE);
