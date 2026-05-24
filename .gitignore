@@ -45,3 +45,6 @@ cu_tesseract/build/
 build/
 
 .env
+test.py
+py_cutesseract.egg-info/
+py_cutesseract/__pycache__/
