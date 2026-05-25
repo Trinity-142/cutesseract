@@ -26,8 +26,9 @@ setup(
                 "cu_tesseract/py_src/lib.cu",
             ],
             extra_compile_args={
-                "cxx": ["-O3", "-DTORCH_USE_CUDA_DSA", "-w", '-lineinfo'],
+                "cxx": ["-O3", "-std=c++20", "-DTORCH_USE_CUDA_DSA", "-w", '-lineinfo'],
                 "nvcc": ["-O3",
+                         "-std=c++20",
                          "-DTORCH_USE_CUDA_DSA",
                          "-w",
                          "-U__CUDA_NO_BFLOAT16_OPERATORS__",

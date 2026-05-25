@@ -214,8 +214,8 @@ static __global__ void _gemm_nkm_wmma_simple(
 }
 
 template <typename T = fp16>
+requires std::is_same_v<T, fp16> || std::is_same_v<T, bf16>
 __host__ void _gemm_nkm_wmma_launcher(Matrix<T> &A, Matrix<T> &B, Matrix<fp32> &C) {
-    static_assert(std::is_same<T, fp16>::value || std::is_same<T, bf16>::value, "WMMA kernel supports only FP16 or BF16 input");
 
     size_t N = A.shape().first;
     size_t K = A.shape().second;

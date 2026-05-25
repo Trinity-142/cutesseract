@@ -61,3 +61,21 @@ def matmul_wmma(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         gemm_wmma_bf16(a, b, res)
 
     return res.to(a.dtype)
+
+def matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+
+    assert a.dim() == 2 and b.dim() == 2
+    assert a.device == b.device
+
+    if a.dtype == torch.float16 or a.dtype == torch.bfloat16:
+        return matmul_wmma(a, b)
+
+    assert a.dtype == torch.float32, "py_cutesseract.matmul supports only FP16, BF16 and FP32"
+
+    if a.shape[0] < 4 or b.shape[1] < 4:
+        return matmul_fp32(a, b)
+
+    if a.shape[0] == a.shape[1] == b.shape[0] == b.shape[1]:
+        return matmul_square_fp32(a, b)
+    else:
+        return matmul_fp32(a, b)
