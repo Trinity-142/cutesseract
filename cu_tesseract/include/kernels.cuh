@@ -2,6 +2,8 @@
 
 #include <cuda_runtime.h>
 #include <crt/mma.h>
+#include <cuda_pipeline.h>
+#include <cooperative_groups.h>
 
 #include "dtypes.cuh"
 #include "matrix.cuh"
@@ -146,12 +148,41 @@ static __global__ void _gemm_nkm_simple(T *A, // row-wise
   }
 }
 
-// https://developer.nvidia.com/blog/programming-tensor-cores-cuda-9/
 constexpr int tileSize = 16;
 constexpr int threadsPerWarp = 32;
-constexpr size_t warpBlockSize = 2;
+
+// warps topology in block
+constexpr size_t WARP_BLOCK_ROWS = 4; // Y
+constexpr size_t WARP_BLOCK_COLS = 2; // X
+constexpr size_t NUM_WARPS = WARP_BLOCK_ROWS * WARP_BLOCK_COLS;
+constexpr size_t NUM_THREADS = NUM_WARPS * threadsPerWarp;
+
+// 32x64 tile in C for each warp
+constexpr size_t WARP_TILE_ROWS = 2;  // 2x16 = 32 elements
+constexpr size_t WARP_TILE_COLS = 4;  // 4x16 = 64 elements
+
+// 128x128 tile in C for each block
+constexpr size_t BLOCK_TILE_ROWS = WARP_BLOCK_ROWS * WARP_TILE_ROWS * tileSize; // 4 * 2 * 16 = 128
+constexpr size_t BLOCK_TILE_COLS = WARP_BLOCK_COLS * WARP_TILE_COLS * tileSize; // 2 * 4 * 16 = 128
+
+constexpr size_t TILE_K = 32;
 constexpr size_t PAD = 8;
-// A(n*k) x B(k*m) = c(n*m)
+
+// A[BLOCK_TILE_ROWS][TILE_K]
+constexpr size_t A_THREADS_PER_ROW = TILE_K / 8;                           // 32 / 8 = 4
+constexpr size_t A_ROWS_PER_STEP = NUM_THREADS / A_THREADS_PER_ROW;        // 256 / 4 = 64
+constexpr size_t A_STEPS = BLOCK_TILE_ROWS / A_ROWS_PER_STEP;              // 128 / 64 = 2
+
+// B[TILE_K][BLOCK_TILE_COLS]
+constexpr size_t B_THREADS_PER_ROW = BLOCK_TILE_COLS / 8;                  // 128 / 8 = 16
+constexpr size_t B_ROWS_PER_STEP = NUM_THREADS / B_THREADS_PER_ROW;        // 256 / 16 = 16
+constexpr size_t B_STEPS = TILE_K / B_ROWS_PER_STEP;                       // 32 / 16 = 2
+
+constexpr size_t A_FP64_PER_ROW = TILE_K / 4;
+constexpr size_t A_NOTALIGNED_STEPS = (BLOCK_TILE_ROWS * A_FP64_PER_ROW) / NUM_THREADS;
+constexpr size_t B_FP64_PER_ROW = BLOCK_TILE_COLS / 4;
+constexpr size_t B_NOTALIGNED_STEPS = (TILE_K * B_FP64_PER_ROW) / NUM_THREADS;
+
 template <bool IS_ALIGNED>
 static __global__ void _gemm_nkm_wmma_simple(
     fp16 *A,
@@ -160,62 +191,151 @@ static __global__ void _gemm_nkm_wmma_simple(
     size_t N, size_t K, size_t M
 ) {
     size_t threadId = threadIdx.y * blockDim.x + threadIdx.x;
-    size_t warpId = threadId / threadsPerWarp;                          // [0..3] 2x2 warps for each thread block
-    size_t warpRow = warpId / warpBlockSize;                            // [0, 1]
-    size_t warpCol = warpId % warpBlockSize;                            // [0, 1]
-    // top left block corner
-    size_t globalBlockRow = blockIdx.y * (warpBlockSize * tileSize);
-    size_t globalBlockCol = blockIdx.x * (warpBlockSize * tileSize);
+    size_t warpId = threadId / threadsPerWarp;
+    size_t warpRow = warpId / WARP_BLOCK_COLS;
+    size_t warpCol = warpId % WARP_BLOCK_COLS;
 
-    // 32x16 from A * 16x32 from B = 32x32 in C calcs each thread block. 4 mmuls of 16x16 tiles -> 1 mmul 16x16 for each warp
-    __shared__ fp16 block_A[warpBlockSize * tileSize][tileSize + PAD];  // PAD to resolve smem bank conflicts (https://modal.com/gpu-glossary/perf/bank-conflict)
-    __shared__ fp16 block_B[tileSize][warpBlockSize * tileSize + PAD];
+    size_t globalBlockRow = blockIdx.y * BLOCK_TILE_ROWS;
+    size_t globalBlockCol = blockIdx.x * BLOCK_TILE_COLS;
 
-    wmma::fragment<wmma::matrix_a, tileSize, tileSize, tileSize, fp16, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, tileSize, tileSize, tileSize, fp16, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, tileSize, tileSize, tileSize, fp32> c_frag;
-    wmma::fill_fragment(c_frag, 0.0f);
+    __shared__ fp16 block_A[2][BLOCK_TILE_ROWS][TILE_K + PAD];
+    __shared__ fp16 block_B[2][TILE_K][BLOCK_TILE_COLS + PAD];
 
-    for (size_t i = 0; i < K; i += tileSize) {
-        // 32x16 = 512 fp16 elements, 128 threads in block -> each thread should store 4 fp16 elements (or one fp64) to smem
-        size_t row_A = threadId / 4;                                    // 16 / 4 = 4 threads per row
-        size_t col_A = (threadId % 4) * 4;
-        size_t global_row_A = globalBlockRow + row_A;
-        size_t global_col_A = i + col_A;
-        *(reinterpret_cast<fp64*>(&block_A[row_A][col_A])) = safe_load<IS_ALIGNED>(A, global_row_A, global_col_A, N, K, K);
+    wmma::fragment<wmma::matrix_a, tileSize, tileSize, tileSize, fp16, wmma::row_major> a_frag[WARP_TILE_ROWS];
+    wmma::fragment<wmma::matrix_b, tileSize, tileSize, tileSize, fp16, wmma::row_major> b_frag[WARP_TILE_COLS];
+    wmma::fragment<wmma::accumulator, tileSize, tileSize, tileSize, fp32> c_frag[WARP_TILE_ROWS][WARP_TILE_COLS];
 
-        size_t row_B = threadId / 8;                                    // 32 / 4 = 8 threads per row
-        size_t col_B = (threadId % 8) * 4;
-        size_t global_row_B = i + row_B;
-        size_t global_col_B = globalBlockCol + col_B;
-       *(reinterpret_cast<fp64*>(&block_B[row_B][col_B])) = safe_load<IS_ALIGNED>(B, global_row_B, global_col_B, K, M, N);
-        __syncthreads();
+    for (int i = 0; i < WARP_TILE_ROWS; i++) {
+        for (int j = 0; j < WARP_TILE_COLS; j++) {
+            wmma::fill_fragment(c_frag[i][j], 0.0f);
+        }
+    }
 
-        fp16* warp_A = &block_A[warpRow * tileSize][0];                 // top left corner of 16x16 tile from A for that warp
-        fp16* warp_B = &block_B[0][warpCol * tileSize];                 // top left corner of 16x16 tile from B for that warp
-        wmma::load_matrix_sync(a_frag, warp_A, tileSize + PAD);
-        wmma::load_matrix_sync(b_frag, warp_B, warpBlockSize * tileSize + PAD);
-        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    // Prologue
+    if constexpr (IS_ALIGNED) {
+        for (int step = 0; step < A_STEPS; step++) {
+            int r_a = step * A_ROWS_PER_STEP + threadId / A_THREADS_PER_ROW;
+            int c_a = (threadId % A_THREADS_PER_ROW) * 8;
+            __pipeline_memcpy_async(&block_A[0][r_a][c_a], &A[(globalBlockRow + r_a) * K + c_a], 16);
+        }
+        for (int step = 0; step < B_STEPS; step++) {
+            int r_b = step * B_ROWS_PER_STEP + threadId / B_THREADS_PER_ROW;
+            int c_b = (threadId % B_THREADS_PER_ROW) * 8;
+            __pipeline_memcpy_async(&block_B[0][r_b][c_b], &B[r_b * M + (globalBlockCol + c_b)], 16);
+        }
+        __pipeline_commit();
+        __pipeline_wait_prior(0);
+    } else {
+        for (int step = 0; step < A_NOTALIGNED_STEPS; step++) {
+            int idx = step * NUM_THREADS + threadId;
+            int r_a = idx / A_FP64_PER_ROW;
+            int c_a = (idx % A_FP64_PER_ROW) * 4;
+            *(reinterpret_cast<fp64*>(&block_A[0][r_a][c_a])) = safe_load<false>(A, globalBlockRow + r_a, c_a, N, K, K);
+        }
+        for (int step = 0; step < B_NOTALIGNED_STEPS; step++) {
+            int idx = step * NUM_THREADS + threadId;
+            int r_b = idx / B_FP64_PER_ROW;
+            int c_b = (idx % B_FP64_PER_ROW) * 4;
+            *(reinterpret_cast<fp64*>(&block_B[0][r_b][c_b])) = safe_load<false>(B, r_b, globalBlockCol + c_b, K, M, M);
+        }
+    }
+    __syncthreads();
+
+
+    // main for
+    for (size_t i = 0; i < K; i += TILE_K) {
+        int current = (i / TILE_K) % 2;
+        int next = (current + 1) % 2;
+        size_t next_i = i + TILE_K;
+
+        if (next_i < K) {
+            if constexpr (IS_ALIGNED) {
+                for (int step = 0; step < A_STEPS; step++) {
+                    int r_a = step * A_ROWS_PER_STEP + threadId / A_THREADS_PER_ROW;
+                    int c_a = (threadId % A_THREADS_PER_ROW) * 8;
+                    __pipeline_memcpy_async(&block_A[next][r_a][c_a], &A[(globalBlockRow + r_a) * K + (next_i + c_a)], 16);
+                }
+                for (int step = 0; step < B_STEPS; step++) {
+                    int r_b = step * B_ROWS_PER_STEP + threadId / B_THREADS_PER_ROW;
+                    int c_b = (threadId % B_THREADS_PER_ROW) * 8;
+                    __pipeline_memcpy_async(&block_B[next][r_b][c_b], &B[(next_i + r_b) * M + (globalBlockCol + c_b)], 16);
+                }
+                __pipeline_commit();
+            } else {
+                for (int step = 0; step < A_NOTALIGNED_STEPS; step++) {
+                    int idx = step * NUM_THREADS + threadId;
+                    int r_a = idx / A_FP64_PER_ROW;
+                    int c_a = (idx % A_FP64_PER_ROW) * 4;
+                    *(reinterpret_cast<fp64*>(&block_A[next][r_a][c_a])) = safe_load<false>(A, globalBlockRow + r_a, next_i + c_a, N, K, K);
+                }
+                for (int step = 0; step < B_NOTALIGNED_STEPS; step++) {
+                    int idx = step * NUM_THREADS + threadId;
+                    int r_b = idx / B_FP64_PER_ROW;
+                    int c_b = (idx % B_FP64_PER_ROW) * 4;
+                    *(reinterpret_cast<fp64*>(&block_B[next][r_b][c_b])) = safe_load<false>(B, next_i + r_b, globalBlockCol + c_b, K, M, M);
+                }
+            }
+        }
+
+        constexpr size_t NUM_K_STEPS = TILE_K / tileSize; // 32 / 16 = 2
+        for (int k_step = 0; k_step < NUM_K_STEPS; ++k_step) {
+            for (int m = 0; m < WARP_TILE_ROWS; m++) {
+                wmma::load_matrix_sync(a_frag[m], &block_A[current][warpRow * (WARP_TILE_ROWS * tileSize) + m * tileSize][k_step * tileSize], TILE_K + PAD);
+            }
+            for (int n = 0; n < WARP_TILE_COLS; n++) {
+                wmma::load_matrix_sync(b_frag[n], &block_B[current][k_step * tileSize][warpCol * (WARP_TILE_COLS * tileSize) + n * tileSize], BLOCK_TILE_COLS + PAD);
+            }
+            for (int m = 0; m < WARP_TILE_ROWS; m++) {
+                for (int n = 0; n < WARP_TILE_COLS; n++) {
+                    wmma::mma_sync(c_frag[m][n], a_frag[m], b_frag[n], c_frag[m][n]);
+                }
+            }
+        }
+
+        if (next_i < K) {
+            if constexpr (IS_ALIGNED) {
+                __pipeline_wait_prior(0);
+            }
+        }
         __syncthreads();
     }
-    size_t globalRow = globalBlockRow + warpRow * tileSize;
-    size_t globalCol = globalBlockCol + warpCol * tileSize;
-    if constexpr (IS_ALIGNED) {
-        wmma::store_matrix_sync(C + globalRow * M + globalCol, c_frag, M, wmma::mem_row_major);
-    } else {
-        __shared__ float block_C[warpBlockSize * tileSize][warpBlockSize * tileSize];
-        float* warp_C = &block_C[warpRow * tileSize][warpCol * tileSize];
-        wmma::store_matrix_sync(warp_C, c_frag, warpBlockSize * tileSize, wmma::mem_row_major);
-        __syncthreads();
 
-        for (size_t i = threadId; i < (warpBlockSize * tileSize) * (warpBlockSize * tileSize); i += blockDim.x * blockDim.y) {
-            size_t local_r = i / (warpBlockSize * tileSize);
-            size_t local_c = i % (warpBlockSize * tileSize);
-            size_t g_r = globalBlockRow + local_r;
-            size_t g_c = globalBlockCol + local_c;
-            if (g_r < N && g_c < M) {
-                C[g_r * M + g_c] = block_C[local_r][local_c];
+    if constexpr (IS_ALIGNED) {
+        for (int m = 0; m < WARP_TILE_ROWS; m++) {
+            for (int n = 0; n < WARP_TILE_COLS; n++) {
+                size_t g_r = globalBlockRow + warpRow * (WARP_TILE_ROWS * tileSize) + m * tileSize;
+                size_t g_c = globalBlockCol + warpCol * (WARP_TILE_COLS * tileSize) + n * tileSize;
+                wmma::store_matrix_sync(C + g_r * M + g_c, c_frag[m][n], M, wmma::mem_row_major);
             }
+        }
+    } else {
+        float* warp_buf = reinterpret_cast<float*>(block_A);
+        constexpr size_t WARP_C_ELEMENTS = (WARP_TILE_ROWS * tileSize) * (WARP_TILE_COLS * tileSize); // 32 * 64 = 2048
+        for (int w = 0; w < NUM_WARPS; w++) {
+            if (warpId == w) {
+                for (int m = 0; m < WARP_TILE_ROWS; m++) {
+                    for (int n = 0; n < WARP_TILE_COLS; n++) {
+                        wmma::store_matrix_sync(&warp_buf[(m * tileSize) * (WARP_TILE_COLS * tileSize) + (n * tileSize)], c_frag[m][n], WARP_TILE_COLS * tileSize, wmma::mem_row_major);
+                    }
+                }
+            }
+            __syncthreads();
+
+            for (int idx = threadId; idx < WARP_C_ELEMENTS; idx += NUM_THREADS) {
+                int l_r = idx / (WARP_TILE_COLS * tileSize);
+                int l_c = idx % (WARP_TILE_COLS * tileSize);
+
+                int w_r = w / WARP_BLOCK_COLS;
+                int w_c = w % WARP_BLOCK_COLS;
+
+                size_t g_r = globalBlockRow + w_r * (WARP_TILE_ROWS * tileSize) + l_r;
+                size_t g_c = globalBlockCol + w_c * (WARP_TILE_COLS * tileSize) + l_c;
+
+                if (g_r < N && g_c < M) {
+                    C[g_r * M + g_c] = warp_buf[idx];
+                }
+            }
+            __syncthreads();
         }
     }
 }
@@ -233,11 +353,12 @@ __host__ void _gemm_nkm_wmma_launcher(Matrix<fp16> &A, Matrix<fp16> &B, Matrix<f
     B.cuda();
     C.cuda();
 
-    bool is_aligned = (K % tileSize == 0) && (N % (tileSize * warpBlockSize) == 0) && (M % (tileSize * warpBlockSize) == 0);
-    dim3 block_dim(warpBlockSize * threadsPerWarp, warpBlockSize);                  // x:[0..63], y:[0,1] -> 2x2 warp grid
-    dim3 grid_dim((M + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize),
-                (N + (tileSize * warpBlockSize - 1)) / (tileSize * warpBlockSize));
-    static_assert(warpBlockSize * warpBlockSize * threadsPerWarp <= 1024);
+    bool is_aligned = (K % 16 == 0) && (N % BLOCK_TILE_ROWS == 0) && (M % BLOCK_TILE_COLS == 0);
+
+    dim3 block_dim(NUM_THREADS);
+    dim3 grid_dim((M + BLOCK_TILE_COLS - 1) / BLOCK_TILE_COLS,
+                  (N + BLOCK_TILE_ROWS - 1) / BLOCK_TILE_ROWS);
+
     if (is_aligned) {
         _gemm_nkm_wmma_simple<true><<<grid_dim, block_dim>>>(A.item(), B.item(), C.item(), N, K, M);
     } else {

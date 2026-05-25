@@ -12,7 +12,7 @@ using std::endl;
 using std::vector;
 
 constexpr size_t n = 3072, k = 3072, m = 3072;
-constexpr size_t n_wmma = 3071, k_wmma = 3071, m_wmma = 3071;
+constexpr size_t n_wmma = 3072, k_wmma = 3072, m_wmma = 3072;
 //constexpr size_t n_wmma = 3081, k_wmma = 3082, m_wmma = 3073;
 //constexpr size_t n_wmma = 1337, k_wmma = 2743, m_wmma = 3001;
 //constexpr size_t n = 3000, k = 3000, m = 3000;
