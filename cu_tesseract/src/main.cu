@@ -68,8 +68,8 @@ std::chrono::duration<double, std::milli> test_wmma(Matrix<fp32> &A, Matrix<fp32
     A.cuda();
     B.cuda();
     C.cuda();
-    Matrix<fp16> A_fp16(n_wmma, k_wmma, ROW_WISE, CUDA);
-    Matrix<fp16> B_fp16(k_wmma, m_wmma, ROW_WISE, CUDA);
+    Matrix<fp16> A_fp16(n_wmma, k_wmma, DataLayout::ROW_WISE, DataDevice::CUDA);
+    Matrix<fp16> B_fp16(k_wmma, m_wmma, DataLayout::ROW_WISE, DataDevice::CUDA);
 
     size_t threads = 256;
     castFp32ToFp16<<<(n_wmma * k_wmma + threads - 1) / threads, threads>>>(A.item(), A_fp16.item(), n_wmma * k_wmma);
@@ -111,12 +111,12 @@ signed main() {
     Matrix<fp32> *A, *B, *C, *A_wmma, *B_wmma, *C_wmma;
 
     for (size_t i = 0; i < num_tries + 1; i++) {
-        A = new Matrix<fp32>((size_t)n, (size_t)k, ROW_WISE, CUDA);
-        B = new Matrix<fp32>((size_t)k, (size_t)m, ROW_WISE, CUDA);
-        C = new Matrix<fp32>((size_t)n, (size_t)m, ROW_WISE, CUDA);
-        A_wmma = new Matrix<fp32>((size_t)n_wmma, (size_t)k_wmma, ROW_WISE, CUDA);
-        B_wmma = new Matrix<fp32>((size_t)k_wmma, (size_t)m_wmma, ROW_WISE, CUDA);
-        C_wmma = new Matrix<fp32>((size_t)n_wmma, (size_t)m_wmma, ROW_WISE, CUDA);
+        A = new Matrix<fp32>((size_t)n, (size_t)k, DataLayout::ROW_WISE, DataDevice::CUDA);
+        B = new Matrix<fp32>((size_t)k, (size_t)m, DataLayout::ROW_WISE, DataDevice::CUDA);
+        C = new Matrix<fp32>((size_t)n, (size_t)m, DataLayout::ROW_WISE, DataDevice::CUDA);
+        A_wmma = new Matrix<fp32>((size_t)n_wmma, (size_t)k_wmma, DataLayout::ROW_WISE, DataDevice::CUDA);
+        B_wmma = new Matrix<fp32>((size_t)k_wmma, (size_t)m_wmma, DataLayout::ROW_WISE, DataDevice::CUDA);
+        C_wmma = new Matrix<fp32>((size_t)n_wmma, (size_t)m_wmma, DataLayout::ROW_WISE, DataDevice::CUDA);
 
         A->fill_random((unsigned long long)(i + 993));
         B->fill_random((unsigned long long)(i + 993));

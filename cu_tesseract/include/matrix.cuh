@@ -13,6 +13,7 @@
 
 #include "dtypes.cuh"
 #include "utils.cuh"
+#include "MatrixView.cuh"
 
 enum class DataLayout {
   ROW_WISE,
@@ -24,8 +25,6 @@ enum class DataDevice {
   CUDA,
 };
 
-using enum DataLayout;
-using enum DataDevice;
 
 template <typename T> class Matrix {
   T *cpu_ptr;
@@ -34,7 +33,7 @@ template <typename T> class Matrix {
   DataLayout layout;
 
   size_t rows, cols, num_elements;
-
+  bool foreign_pointer = false;
 public:
   DataDevice device;
   __host__ Matrix(size_t rows, size_t cols, DataLayout layout,
@@ -42,7 +41,7 @@ public:
       : rows(rows), cols(cols), device(device), layout(layout),
         num_elements(sizeof(T) * rows * cols) {
 
-    if (device == CUDA) {
+    if (device == DataDevice::CUDA) {
       CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
       cpu_ptr = nullptr;
     } else {
@@ -52,7 +51,9 @@ public:
   }
 
   __host__ ~Matrix() {
-    if (device == CUDA) {
+    if (foreign_pointer) return;
+
+    if (device == DataDevice::CUDA) {
       CUDA_CHECK(cudaFree(device_ptr));
     } else {
       delete[] cpu_ptr;
@@ -63,7 +64,7 @@ public:
       : rows(other.rows), cols(other.cols), num_elements(other.num_elements),
         layout(other.layout), device(other.device), cpu_ptr(nullptr),
         device_ptr(nullptr) {
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       cpu_ptr = new T[rows * cols];
       memcpy(cpu_ptr, other.cpu_ptr, num_elements);
     } else {
@@ -73,11 +74,22 @@ public:
     }
   }
 
+  __host__ Matrix(T* ptr, size_t rows, size_t cols, DataLayout layout, DataDevice device): rows(rows), cols(cols), device(device), layout(layout), num_elements(sizeof(T) * rows * cols) {
+    foreign_pointer = true;
+    if (device == DataDevice::CUDA) {
+        device_ptr = ptr;
+        cpu_ptr = nullptr;
+    } else {
+        device_ptr = nullptr;
+        cpu_ptr = ptr;
+    }
+  }
+
   __host__ Matrix &operator=(const Matrix &other) {
     if (this == &other)
       return *this;
 
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       delete[] cpu_ptr;
     } else {
       CUDA_CHECK(cudaFree(device_ptr));
@@ -89,7 +101,7 @@ public:
     layout = other.layout;
     device = other.device;
 
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       cpu_ptr = new T[rows * cols];
       memcpy(cpu_ptr, other.cpu_ptr, num_elements);
       device_ptr = nullptr;
@@ -105,7 +117,7 @@ public:
 
   __host__ Matrix(Matrix &&other)
       : cpu_ptr(nullptr), device_ptr(nullptr), rows(0), cols(0),
-        num_elements(0), layout(ROW_WISE), device(CPU) {
+        num_elements(0), layout(DataLayout::ROW_WISE), device(DataDevice::CPU) {
     this->swap(other);
   }
 
@@ -123,7 +135,7 @@ public:
 
     Matrix result(rows, cols, layout, device);
 
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       for (size_t i = 0; i < rows * cols; ++i) {
         result.cpu_ptr[i] = cpu_ptr[i] + other.cpu_ptr[i];
       }
@@ -146,7 +158,7 @@ public:
 
     Matrix result(rows, cols, layout, device);
 
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       for (size_t i = 0; i < rows * cols; ++i) {
         result.cpu_ptr[i] = cpu_ptr[i] - other.cpu_ptr[i];
       }
@@ -167,7 +179,7 @@ public:
     assert(layout == other.layout);
     assert(device == other.device);
 
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       for (size_t i = 0; i < rows * cols; ++i) {
         cpu_ptr[i] += other.cpu_ptr[i];
       }
@@ -187,7 +199,7 @@ public:
     assert(layout == other.layout);
     assert(device == other.device);
 
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       for (size_t i = 0; i < rows * cols; ++i) {
         cpu_ptr[i] -= other.cpu_ptr[i];
       }
@@ -213,7 +225,7 @@ public:
   }
 
   __host__ void fill_random(unsigned long long seed = 812ULL) {
-    if (device == CUDA) {
+    if (device == DataDevice::CUDA) {
       curandGenerator_t gen;
       curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
       curandSetPseudoRandomGeneratorSeed(gen, seed);
@@ -231,7 +243,7 @@ public:
   }
 
   __host__ void fill_const(T val) {
-    if (device == CUDA) {
+    if (device == DataDevice::CUDA) {
       T *h_ptr = new T[rows * cols];
       for (size_t i = 0; i < rows * cols; i++)
         h_ptr[i] = val;
@@ -247,7 +259,7 @@ public:
   __host__ void ones() { fill_const((T)1.0); }
 
   __host__ void zeros() {
-    if (device == CUDA) {
+    if (device == DataDevice::CUDA) {
       CUDA_CHECK(cudaMemset(device_ptr, 0, num_elements));
     } else {
       memset(cpu_ptr, 0, num_elements);
@@ -255,10 +267,10 @@ public:
   }
 
   __host__ void cpu() {
-    if (device == CPU)
+    if (device == DataDevice::CPU)
       return;
 
-    device = CPU;
+    device = DataDevice::CPU;
 
     cpu_ptr = new T[cols * rows];
     CUDA_CHECK(
@@ -269,10 +281,10 @@ public:
   }
 
   __host__ void cuda() {
-    if (device == CUDA)
+    if (device == DataDevice::CUDA)
       return;
 
-    device = CUDA;
+    device = DataDevice::CUDA;
 
     CUDA_CHECK(cudaMalloc(&device_ptr, num_elements));
     CUDA_CHECK(
@@ -283,7 +295,7 @@ public:
   }
 
   __host__ T *item() const {
-    if (device == CPU) {
+    if (device == DataDevice::CPU) {
       return cpu_ptr;
     } else {
       return device_ptr;
@@ -294,19 +306,19 @@ public:
     if (layout == new_layout)
       return;
 
-    if (device == CUDA) {
+    if (device == DataDevice::CUDA) {
       throw std::runtime_error(
-          ".to_layout not implemented for CUDA. consider using .cpu()");
+          ".to_layout not implemented for DataDevice::CUDA. consider using .cpu()");
     }
 
     T *new_buffer = new T[rows * cols];
     for (size_t i = 0; i < rows; i++) {
       for (size_t j = 0; j < cols; j++) {
-        if (new_layout == ROW_WISE) {
+        if (new_layout == DataLayout::ROW_WISE) {
           // Current is COL_WISE: i + j * rows
           new_buffer[i * cols + j] = cpu_ptr[i + j * rows];
         } else {
-          // Current is ROW_WISE: i * cols + j
+          // Current is DataLayout::ROW_WISE: i * cols + j
           new_buffer[i + j * rows] = cpu_ptr[i * cols + j];
         }
       }
@@ -319,7 +331,7 @@ public:
 
   __host__ friend std::ostream &operator<<(std::ostream &os,
                                            const Matrix &matrix) {
-    if (matrix.device == CUDA) {
+    if (matrix.device == DataDevice::CUDA) {
       throw std::runtime_error(
           "data must be on cpu for printing. consider calling .cpu()");
     }
@@ -347,12 +359,12 @@ public:
     if (i >= rows || j >= cols) {
       throw std::out_of_range("Index out of bounds");
     }
-    if (device == CUDA) {
+    if (device == DataDevice::CUDA) {
       throw std::runtime_error(
           "data must be on cpu to get value. consider calling .cpu()");
     }
 
-    if (layout == ROW_WISE) {
+    if (layout == DataLayout::ROW_WISE) {
       return cpu_ptr[i * cols + j];
     } else {
       return cpu_ptr[i + j * rows];
@@ -363,12 +375,12 @@ public:
     if (i >= rows || j >= cols) {
       throw std::out_of_range("Index out of bounds");
     }
-    if (device == CUDA) {
+    if (device == DataDevice::CUDA) {
       throw std::runtime_error(
           "data must be on cpu to set value. consider calling .cpu()");
     }
 
-    if (layout == ROW_WISE) {
+    if (layout == DataLayout::ROW_WISE) {
       cpu_ptr[i * cols + j] = val;
     } else {
       cpu_ptr[i + j * rows] = val;

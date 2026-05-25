@@ -5,11 +5,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CUDA_STANDARD 20)
 
 set(CMAKE_CUDA_ARCHITECTURES 86)
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O2 -Xptxas=-v")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 -Xptxas=-v")
 
 include_directories(cu_tesseract/include)
 
-add_executable(cutesseract
-        tests/test_main.cu)
+add_executable(cutesseract cu_tesseract/src/main.cu)
+add_executable(test_cutesseract tests/test_main.cu)
 
 target_link_libraries(cutesseract curand)
+target_link_libraries(test_cutesseract curand)
